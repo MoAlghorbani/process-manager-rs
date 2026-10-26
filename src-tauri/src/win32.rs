@@ -231,12 +231,19 @@ pub fn kill_process_tree(pid: u32) {
     }
 
     // 2. Terminate target PID
-    terminate_pid(pid);
+    let killed = terminate_pid(pid);
 
-    // 3. Fallback taskkill
-    let _ = Command::new("taskkill")
-        .args(["/F", "/T", "/PID", &pid.to_string()])
-        .output();
+    // 3. Fallback taskkill only if process might still linger
+    if !killed {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let mut cmd = Command::new("taskkill");
+            cmd.args(["/F", "/T", "/PID", &pid.to_string()]);
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            let _ = cmd.output();
+        }
+    }
 }
 
 // ==========================================

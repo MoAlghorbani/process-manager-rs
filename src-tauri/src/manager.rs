@@ -182,14 +182,22 @@ impl ProcessManager {
     }
 
     pub fn save_state(&self) {
-        let map = self.services.read().unwrap();
-        let mut configs: HashMap<String, ServiceConfig> = HashMap::new();
-        for (name, s_lock) in map.iter() {
-            let s = s_lock.lock().unwrap();
-            let mut cfg = s.config.clone();
-            cfg.saved_status = Some(s.status.clone());
-            configs.insert(name.clone(), cfg);
-        }
+        let configs = {
+            let map = self.services.read().unwrap();
+            let mut configs: HashMap<String, ServiceConfig> = HashMap::new();
+            for (name, s_lock) in map.iter() {
+                if let Ok(s) = s_lock.try_lock() {
+                    let mut cfg = s.config.clone();
+                    cfg.saved_status = Some(s.status.clone());
+                    configs.insert(name.clone(), cfg);
+                } else if let Ok(s) = s_lock.lock() {
+                    let mut cfg = s.config.clone();
+                    cfg.saved_status = Some(s.status.clone());
+                    configs.insert(name.clone(), cfg);
+                }
+            }
+            configs
+        };
 
         if let Ok(json) = serde_json::to_string_pretty(&configs) {
             let services_file = self.services_file.read().unwrap().clone();
@@ -396,15 +404,24 @@ impl ProcessManager {
             }
         };
 
-        let mut s = service_lock.lock().unwrap();
-        s.status = "stopped".to_string();
+        // Scope the lock on `s` so it is DROPPED before terminating processes
+        // and before calling save_state(), preventing self-deadlock.
+        let (active, pid_opt) = {
+            let mut s = service_lock.lock().unwrap();
+            s.status = "stopped".to_string();
+            let act = s.active.take();
+            let pid = act.as_ref().map(|a| a.pid);
+            (act, pid)
+        };
 
-        if let Some(mut act) = s.active.take() {
+        if let Some(mut act) = active {
             act.manual_stop = true;
             if let Some(ref job) = act.job {
                 job.terminate();
             }
-            kill_process_tree(act.pid);
+            if let Some(pid) = pid_opt {
+                kill_process_tree(pid);
+            }
             if let Some(ref mut child) = act.child {
                 let _ = child.kill();
             }
@@ -521,8 +538,10 @@ impl ProcessManager {
 
     pub fn delete_service(&self, name: &str) -> bool {
         self.stop_service(name);
-        let mut map = self.services.write().unwrap();
-        let removed = map.remove(name).is_some();
+        let removed = {
+            let mut map = self.services.write().unwrap();
+            map.remove(name).is_some()
+        };
         self.save_state();
         removed
     }
@@ -611,19 +630,25 @@ impl ProcessManager {
 
     pub fn move_service_to_group(&self, service_name: &str, new_group: &str) -> bool {
         let clean_new = new_group.trim();
-        let map = self.services.read().unwrap();
-        if let Some(s_lock) = map.get(service_name) {
-            let mut s = s_lock.lock().unwrap();
-            s.config.group = if clean_new.is_empty() {
-                "default".to_string()
+        let found = {
+            let map = self.services.read().unwrap();
+            if let Some(s_lock) = map.get(service_name) {
+                let mut s = s_lock.lock().unwrap();
+                s.config.group = if clean_new.is_empty() {
+                    "default".to_string()
+                } else {
+                    clean_new.to_string()
+                };
+                true
             } else {
-                clean_new.to_string()
-            };
+                false
+            }
+        };
+
+        if found {
             self.save_state();
-            true
-        } else {
-            false
         }
+        found
     }
 
     pub fn dissolve_group(&self, group: &str) -> usize {
