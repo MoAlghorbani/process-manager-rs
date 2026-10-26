@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Windows Process Manager (Rust Edition)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <script type="module" src="main.js" defer></script>
+</head>
+<body>
+  <!-- Top Navigation Bar -->
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-badge">⚡ RS</div>
+      <div class="brand-info">
+        <h1>Process Manager</h1>
+        <span class="subtext">Rust Core • Win32 Job Objects</span>
+      </div>
+      <div id="admin-badge" class="badge badge-admin">[USER]</div>
+    </div>
+
+    <nav class="nav-tabs">
+      <button class="nav-tab active" data-tab="tab-services" id="tab-btn-services">
+        <span class="tab-icon">⚡</span> Services
+      </button>
+      <button class="nav-tab" data-tab="tab-jiggler" id="tab-btn-jiggler">
+        <span class="tab-icon">🐭</span> Jiggler
+      </button>
+      <button class="nav-tab" data-tab="tab-vault" id="tab-btn-vault">
+        <span class="tab-icon">🔐</span> Vault & Clips
+      </button>
+      <button class="nav-tab" data-tab="tab-tasks" id="tab-btn-tasks">
+        <span class="tab-icon">📝</span> Tasks
+      </button>
+      <button class="nav-tab" data-tab="tab-downloader" id="tab-btn-downloader">
+        <span class="tab-icon">📥</span> Downloader
+      </button>
+      <button class="nav-tab" data-tab="tab-media" id="tab-btn-media">
+        <span class="tab-icon">🎬</span> Media Studio
+      </button>
+    </nav>
+
+    <div class="header-actions">
+      <button class="btn-storage-pill" id="btn-open-storage-modal" title="Change data storage folder / import from custom path">
+        <span class="storage-icon">📁</span>
+        <span class="storage-label" id="lbl-header-storage-path">Storage Folder</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="app-body">
+    <!-- ============================================== -->
+    <!-- TAB 1: SERVICES SUPERVISOR                    -->
+    <!-- ============================================== -->
+    <section id="tab-services" class="tab-pane active">
+      <!-- Toolbar & Actions -->
+      <div class="services-toolbar">
+        <div class="toolbar-left">
+          <div class="pills-scroll" id="group-pills">
+            <button class="pill active" data-group="ALL">🌐 ALL (0)</button>
+          </div>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn btn-primary" id="btn-add-service">➕ Add Service</button>
+          <button class="btn btn-secondary" id="btn-manage-groups">📁 Groups</button>
+          <button class="btn btn-emerald" id="btn-start-all">▶ Start All</button>
+          <button class="btn btn-rose" id="btn-stop-all">⏹ Stop All</button>
+          <button class="btn btn-secondary" id="btn-restart-all">🔄 Restart All</button>
+        </div>
+      </div>
+
+      <!-- Master Split: Services Table + Logs Panel -->
+      <div class="services-split" id="services-split">
+        <!-- Services Grid Container -->
+        <div class="services-panel" id="services-list-container">
+          <table class="services-table">
+            <thead>
+              <tr>
+                <th>NAME / SHORTCUT</th>
+                <th>GROUP</th>
+                <th>STATUS</th>
+                <th>PORT / PID</th>
+                <th>RAM / RESTARTS</th>
+                <th>UPTIME</th>
+                <th style="text-align: right;">ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody id="services-tbody">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Draggable Resizing Handle -->
+        <div class="split-handle" id="split-handle">
+          <div class="handle-grip">••••••••••••••••••••</div>
+        </div>
+
+        <!-- Bottom Real-time Logs Panel -->
+        <div class="logs-panel" id="logs-panel">
+          <div class="logs-toolbar">
+            <div class="logs-title-group">
+              <span class="logs-title" id="logs-title">📜 Select a service to inspect logs</span>
+              <span class="badge badge-subtle" id="logs-size-badge"></span>
+              <span class="badge badge-emerald" id="logs-status-badge">● LIVE</span>
+            </div>
+            <div class="logs-controls">
+              <label class="checkbox-label">
+                <input type="checkbox" id="chk-autoscroll" checked> Auto-Scroll
+              </label>
+              <button class="btn btn-sm btn-secondary" id="btn-log-bottom">Bottom</button>
+              <select class="select-sm" id="select-log-lines">
+                <option value="100">100 lines</option>
+                <option value="250" selected>250 lines</option>
+                <option value="500">500 lines</option>
+                <option value="1000">1000 lines</option>
+              </select>
+              <button class="btn btn-sm btn-secondary" id="btn-copy-logs">Copy</button>
+              <button class="btn btn-sm btn-rose" id="btn-clear-logs">Clear</button>
+              <div class="btn-group-sm">
+                <button class="btn btn-sm btn-secondary" id="btn-logs-collapse" title="Collapse Logs">⬇</button>
+                <button class="btn btn-sm btn-secondary" id="btn-logs-half" title="Half Screen">🗖</button>
+                <button class="btn btn-sm btn-secondary" id="btn-logs-expand" title="Expand Logs">⬆</button>
+              </div>
+            </div>
+          </div>
+          <pre class="logs-content" id="logs-pre">(No service selected)</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 2: MOUSE JIGGLER & ANTI-IDLE               -->
+    <!-- ============================================== -->
+    <section id="tab-jiggler" class="tab-pane">
+      <div class="grid-2-col">
+        <!-- Configuration Card -->
+        <div class="card glass-card">
+          <div class="card-header">
+            <h3>⚙️ Anti-Idle Preferences</h3>
+            <span class="shortcut-badge">Global Shortcut: Ctrl+Alt+J</span>
+          </div>
+
+          <div class="form-group">
+            <label>Mouse Movement Mode</label>
+            <div class="radio-cards">
+              <label class="radio-card">
+                <input type="radio" name="jiggler-mode" value="orbit" checked>
+                <div class="radio-content">
+                  <strong>🌀 Orbit (Smooth Arc)</strong>
+                  <span>Circular continuous motion (28px radius)</span>
+                </div>
+              </label>
+              <label class="radio-card">
+                <input type="radio" name="jiggler-mode" value="zen">
+                <div class="radio-content">
+                  <strong>🧘 Zen (1-Pixel Micro-Nudge)</strong>
+                  <span>Invisible +1px/-1px motion, zero visual disruption</span>
+                </div>
+              </label>
+              <label class="radio-card">
+                <input type="radio" name="jiggler-mode" value="gentle">
+                <div class="radio-content">
+                  <strong>🍃 Gentle (+20px Nudge)</strong>
+                  <span>Noticeable displacement returning after 100ms</span>
+                </div>
+              </label>
+              <label class="radio-card">
+                <input type="radio" name="jiggler-mode" value="api_only">
+                <div class="radio-content">
+                  <strong>⚡ API Keep-Awake Only</strong>
+                  <span>SetThreadExecutionState without cursor movement</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="chk-mouse-enabled" checked> Enable Mouse Jiggle
+              </label>
+              <div class="input-with-label">
+                <input type="number" id="input-mouse-sec" min="1" max="300" value="10">
+                <span>seconds interval</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="chk-key-enabled" checked> Enable Ghost Key Taps
+              </label>
+              <div class="input-with-label">
+                <input type="number" id="input-key-sec" min="5" max="600" value="30">
+                <span>seconds interval</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Ghost Key Selection</label>
+              <select id="select-ghost-key">
+                <option value="f15" selected>VK_F15 (Ghost Key - Invisible)</option>
+                <option value="shift">Shift Key</option>
+                <option value="control">Control Key</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="chk-idle-guard"> Idle Guard (Pause if active)
+              </label>
+              <div class="input-with-label">
+                <input type="number" id="input-idle-threshold" min="3" max="120" value="15">
+                <span>seconds threshold</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="chk-keep-awake" checked> Enforce OS Sleep & Display Prevention
+            </label>
+          </div>
+
+          <button class="btn btn-secondary" id="btn-save-jiggler-cfg" style="width: 100%; margin-top: 10px;">💾 Save Preferences</button>
+        </div>
+
+        <!-- Telemetry & Master Control Card -->
+        <div class="card glass-card">
+          <div class="card-header">
+            <h3>📊 Anti-Idle Telemetry</h3>
+            <span class="badge badge-emerald" id="jiggler-status-badge">Standby</span>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-val" id="stat-total-moves">0</div>
+              <div class="stat-lbl">MOUSE NUDGES</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val" id="stat-total-keys">0</div>
+              <div class="stat-lbl">GHOST KEY TAPS</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val" id="stat-next-move">0s</div>
+              <div class="stat-lbl">NEXT MOVE IN</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-val" id="stat-next-key">0s</div>
+              <div class="stat-lbl">NEXT KEY IN</div>
+            </div>
+          </div>
+
+          <div class="telemetry-banner" id="telemetry-banner">
+            <span class="banner-icon">ℹ️</span>
+            <span class="banner-msg" id="telemetry-msg">Engine is on Standby</span>
+          </div>
+
+          <div class="idle-meter">
+            <div class="idle-meter-label">
+              <span>System Inactivity Duration:</span>
+              <strong id="meter-idle-time">0.0s</strong>
+            </div>
+          </div>
+
+          <button class="btn btn-primary btn-large" id="btn-toggle-jiggler" style="width: 100%; margin-top: 24px;">
+            ▶ START MOUSE JIGGLER
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 3: CREDENTIALS VAULT & CLIPBOARD           -->
+    <!-- ============================================== -->
+    <section id="tab-vault" class="tab-pane">
+      <div class="sub-nav">
+        <button class="sub-tab active" data-subtab="subtab-creds" id="subtab-btn-creds">🔐 Accounts Vault</button>
+        <button class="sub-tab" data-subtab="subtab-clips" id="subtab-btn-clips">📋 Clipboard History</button>
+      </div>
+
+      <!-- Sub-Tab: Credentials -->
+      <div id="subtab-creds" class="subtab-pane active">
+        <div class="tab-toolbar">
+          <input type="text" class="input-search" id="input-search-creds" placeholder="🔍 Search platform, username, notes...">
+          <button class="btn btn-secondary" id="btn-gen-pass-modal">🎲 Password Generator</button>
+          <button class="btn btn-primary" id="btn-add-cred">➕ Add Account</button>
+        </div>
+
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>PLATFORM</th>
+                <th>USERNAME</th>
+                <th>PASSWORD</th>
+                <th>URL</th>
+                <th>NOTES</th>
+                <th style="text-align: right;">ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody id="creds-tbody">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Sub-Tab: Clipboard History -->
+      <div id="subtab-clips" class="subtab-pane">
+        <div class="tab-toolbar">
+          <input type="text" class="input-search" id="input-search-clips" placeholder="🔍 Filter clipboard history...">
+          <label class="checkbox-label">
+            <input type="checkbox" id="chk-pinned-clips"> ⭐ Pinned Only
+          </label>
+          <button class="btn btn-rose" id="btn-clear-clips">🗑️ Clear Unpinned</button>
+        </div>
+
+        <div class="clips-list" id="clips-list">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 4: KANBAN TASK BOARD                       -->
+    <!-- ============================================== -->
+    <section id="tab-tasks" class="tab-pane">
+      <div class="tab-toolbar">
+        <input type="text" class="input-search" id="input-search-tasks" placeholder="🔍 Search tasks...">
+        <select class="select-project" id="select-project-filter">
+          <option value="ALL">📁 All Projects</option>
+        </select>
+        <button class="btn btn-primary" id="btn-add-task">➕ Add Task</button>
+        <button class="btn btn-rose" id="btn-clear-completed-tasks">🗑️ Clear Done</button>
+      </div>
+
+      <div class="kanban-board">
+        <!-- Column 1: To Do -->
+        <div class="kanban-column" id="col-todo">
+          <div class="column-header">
+            <h4>📋 TO DO</h4>
+            <span class="col-count" id="count-todo">0</span>
+          </div>
+          <div class="cards-list" id="list-todo">
+            <!-- Cards rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Column 2: In Progress -->
+        <div class="kanban-column" id="col-doing">
+          <div class="column-header">
+            <h4>🚧 IN PROGRESS</h4>
+            <span class="col-count" id="count-doing">0</span>
+          </div>
+          <div class="cards-list" id="list-doing">
+            <!-- Cards rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Column 3: Done -->
+        <div class="kanban-column" id="col-done">
+          <div class="column-header">
+            <h4>✅ DONE</h4>
+            <span class="col-count" id="count-done">0</span>
+          </div>
+          <div class="cards-list" id="list-done">
+            <!-- Cards rendered dynamically -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 5: YOUTUBE & MEDIA DOWNLOADER              -->
+    <!-- ============================================== -->
+    <section id="tab-downloader" class="tab-pane">
+      <div class="downloader-container">
+        <!-- Input & Options Card -->
+        <div class="card glass-card">
+          <div class="card-header">
+            <h3>📥 Universal Media Downloader</h3>
+            <span class="badge badge-emerald">Embedded 1-EXE yt-dlp</span>
+          </div>
+
+          <div class="url-input-group">
+            <input type="text" id="input-ytdl-url" placeholder="Paste YouTube / Vimeo / Media URL or Playlist Link...">
+            <button class="btn btn-secondary" id="btn-fetch-meta">🔍 Inspect Stream</button>
+          </div>
+
+          <!-- Video / Audio Format Controls -->
+          <div class="downloader-controls-grid">
+            <div class="control-box">
+              <label>Media Mode</label>
+              <div class="radio-pills">
+                <label class="radio-pill active" id="pill-media-video">
+                  <input type="radio" name="media-type" value="video" checked> 🎬 Video
+                </label>
+                <label class="radio-pill" id="pill-media-audio">
+                  <input type="radio" name="media-type" value="audio"> 🎵 Audio Only
+                </label>
+              </div>
+            </div>
+
+            <div class="control-box" id="box-video-format">
+              <label>Container Format</label>
+              <select id="select-video-fmt">
+                <option value="mp4" selected>MP4 (Recommended)</option>
+                <option value="mkv">MKV (Universal)</option>
+                <option value="webm">WEBM (VP9/AV1)</option>
+              </select>
+            </div>
+
+            <div class="control-box" id="box-video-quality">
+              <label>Resolution Quality</label>
+              <select id="select-video-qual">
+                <option value="best" selected>🌟 Best Available</option>
+                <option value="4k">📺 4K (2160p)</option>
+                <option value="1440p">📺 2K (1440p)</option>
+                <option value="1080p">📺 1080p Full HD</option>
+                <option value="720p">📺 720p HD</option>
+                <option value="480p">📺 480p SD</option>
+                <option value="360p">📺 360p Data Saver</option>
+              </select>
+            </div>
+
+            <div class="control-box hidden" id="box-audio-format">
+              <label>Audio Format</label>
+              <select id="select-audio-fmt">
+                <option value="mp3" selected>MP3 (Universal)</option>
+                <option value="m4a">M4A (AAC)</option>
+                <option value="flac">FLAC (Lossless)</option>
+                <option value="wav">WAV (Raw)</option>
+                <option value="opus">OPUS (Modern)</option>
+              </select>
+            </div>
+
+            <div class="control-box hidden" id="box-audio-quality">
+              <label>Bitrate Quality</label>
+              <select id="select-audio-qual">
+                <option value="320k" selected>🔊 320 kbps (High Quality)</option>
+                <option value="256k">🔊 256 kbps</option>
+                <option value="192k">🔊 192 kbps (Standard)</option>
+                <option value="128k">🔊 128 kbps (Compact)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row" style="margin-top: 14px;">
+            <label class="checkbox-label">
+              <input type="checkbox" id="chk-download-playlist" checked>
+              📦 Download Full Playlist (if URL contains playlist)
+            </label>
+            <div class="folder-destination">
+              <span class="muted-text">Save to:</span>
+              <code id="lbl-output-dir">...</code>
+            </div>
+          </div>
+
+          <!-- Video Metadata Preview Box -->
+          <div class="preview-box hidden" id="preview-box">
+            <img id="preview-thumb" src="" alt="Thumbnail" class="preview-thumb">
+            <div class="preview-info">
+              <h4 id="preview-title">...</h4>
+              <p id="preview-uploader" class="muted-text">...</p>
+              <div class="preview-badges">
+                <span class="badge badge-subtle" id="preview-duration">00:00</span>
+                <span class="badge badge-emerald" id="preview-resolution">1080p</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Live Progress Card -->
+          <div class="progress-box hidden" id="progress-box">
+            <div class="progress-header">
+              <span id="progress-item-label">Downloading item...</span>
+              <strong id="progress-percent">0.0%</strong>
+            </div>
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" id="progress-bar-fill" style="width: 0%;"></div>
+            </div>
+            <div class="progress-footer">
+              <span id="progress-speed">Speed: --</span>
+              <span id="progress-size">Size: --</span>
+              <span id="progress-eta">ETA: --</span>
+              <button class="btn btn-sm btn-rose" id="btn-cancel-download">⏹ Cancel</button>
+            </div>
+          </div>
+
+          <button class="btn btn-primary btn-large" id="btn-start-download" style="width: 100%; margin-top: 16px;">
+            ⬇ START DOWNLOAD
+          </button>
+        </div>
+
+        <!-- Download History Table -->
+        <div class="card glass-card" style="margin-top: 20px;">
+          <div class="card-header">
+            <h3>📜 Recent Download History</h3>
+          </div>
+          <div class="table-container">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>MEDIA TITLE</th>
+                  <th>FORMAT</th>
+                  <th>FILE SIZE</th>
+                  <th>DATE</th>
+                  <th style="text-align: right;">ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody id="ytdl-history-tbody">
+                <!-- Rendered dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 6: FFMPEG MEDIA STUDIO & AUDIO BOOSTER    -->
+    <!-- ============================================== -->
+    <section id="tab-media" class="tab-pane">
+      <div class="media-container">
+        <!-- Media Top Bar -->
+        <div class="media-header">
+          <div class="media-title-group">
+            <h2>🎬 Media Studio & Audio Booster</h2>
+            <p class="subtext">Convert videos to MP3, transcode media, and boost audio volume with embedded FFmpeg</p>
+          </div>
+          <div class="engine-badge-group">
+            <div id="media-engine-pill" class="pill pill-engine">
+              <span class="indicator-dot active"></span>
+              <span id="lbl-engine-status">Embedded FFmpeg Active</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mode Selector Ribbon -->
+        <div class="media-modes-bar">
+          <button class="media-mode-btn active" data-mode="video_to_mp3">
+            <span class="mode-icon">🎵</span>
+            <div class="mode-text">
+              <strong>Video to MP3</strong>
+              <small>Extract High-Quality Audio</small>
+            </div>
+          </button>
+          <button class="media-mode-btn" data-mode="boost_volume">
+            <span class="mode-icon">🔊</span>
+            <div class="mode-text">
+              <strong>Audio Booster</strong>
+              <small>Boost Video or Audio Sound</small>
+            </div>
+          </button>
+          <button class="media-mode-btn" data-mode="convert_video">
+            <span class="mode-icon">📹</span>
+            <div class="mode-text">
+              <strong>Video Converter</strong>
+              <small>MP4, MKV, WEBM, GIF</small>
+            </div>
+          </button>
+          <button class="media-mode-btn" data-mode="convert_audio">
+            <span class="mode-icon">🎧</span>
+            <div class="mode-text">
+              <strong>Audio Converter</strong>
+              <small>FLAC, WAV, AAC, OPUS</small>
+            </div>
+          </button>
+          <button class="media-mode-btn" data-mode="convert_image">
+            <span class="mode-icon">🖼️</span>
+            <div class="mode-text">
+              <strong>Image Converter</strong>
+              <small>WEBP, PNG, JPG, ICO</small>
+            </div>
+          </button>
+        </div>
+
+        <!-- Master 2-Column Grid -->
+        <div class="media-grid">
+          <!-- Left Column: Source File & Options -->
+          <div class="media-col-left">
+            <!-- File Input Card -->
+            <div class="media-card">
+              <div class="card-header">
+                <h3>📁 Source File</h3>
+                <span class="text-muted" id="lbl-file-source-hint">Select video, audio, or image</span>
+              </div>
+              <div class="media-dropzone" id="media-dropzone">
+                <div class="dropzone-content">
+                  <div class="dropzone-icon">📥</div>
+                  <div class="dropzone-text">
+                    <strong>Drag & drop file here</strong> or
+                    <button class="btn btn-sm btn-primary" id="btn-browse-media" type="button">Browse File...</button>
+                  </div>
+                  <input type="text" id="input-media-path" class="dropzone-input" placeholder="Or paste absolute file path here...">
+                </div>
+              </div>
+
+              <!-- Media Probe Inspection Badge (hidden until file selected) -->
+              <div class="probe-badge hidden" id="probe-badge">
+                <div class="probe-header">
+                  <div class="probe-file-info">
+                    <span class="probe-name" id="probe-file-name">-</span>
+                    <span class="badge" id="probe-format">-</span>
+                    <span class="text-dim" id="probe-size">- MB</span>
+                    <span class="text-dim" id="probe-duration">⏱️ 00:00:00</span>
+                  </div>
+                  <button class="btn btn-xs btn-cyan" id="btn-analyze-volume" type="button">🔍 Analyze Peak Volume</button>
+                </div>
+                <div class="probe-streams" id="probe-streams">
+                  <!-- Stream chips dynamically added -->
+                </div>
+                <!-- Volume Analysis Alert (hidden until analyzed) -->
+                <div class="volume-analysis-box hidden" id="volume-analysis-box">
+                  <div class="vol-metric"><strong>Peak:</strong> <span id="lbl-vol-max">- dB</span></div>
+                  <div class="vol-metric"><strong>Mean:</strong> <span id="lbl-vol-mean">- dB</span></div>
+                  <div class="vol-recommend">
+                    💡 Headroom: <strong id="lbl-vol-rec">+0.0 dB</strong> (<span id="lbl-vol-rec-factor">1.0x</span>)
+                    <button class="btn btn-xs btn-emerald" id="btn-apply-rec-boost" type="button">Apply Headroom Boost</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Conversion Options Card -->
+            <div class="media-card" id="media-options-card">
+              <div class="card-header">
+                <h3 id="lbl-options-title">⚙️ Conversion Settings</h3>
+              </div>
+
+              <!-- 1. Video to MP3 Options -->
+              <div class="media-subform" id="subform-video-to-mp3">
+                <div class="form-group">
+                  <label>Audio Bitrate</label>
+                  <select id="sel-v2mp3-bitrate" class="form-select">
+                    <option value="320k" selected>320 kbps (Extreme Fidelity / Audiophile)</option>
+                    <option value="256k">256 kbps (High Quality)</option>
+                    <option value="192k">192 kbps (Standard CD)</option>
+                    <option value="128k">128 kbps (Compact)</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- 2. Audio Booster Options -->
+              <div class="media-subform hidden" id="subform-boost-volume">
+                <div class="form-group">
+                  <label>Boost Method</label>
+                  <div class="radio-pill-group">
+                    <label class="radio-pill">
+                      <input type="radio" name="boost_type" value="multiplier" checked>
+                      <span>Linear Multiplier / dB</span>
+                    </label>
+                    <label class="radio-pill">
+                      <input type="radio" name="boost_type" value="loudnorm">
+                      <span>Broadcast Loudness (EBU R128)</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div id="boost-slider-section">
+                  <div class="form-group">
+                    <div class="slider-header">
+                      <label>Volume Boost Level: <strong id="lbl-boost-val" class="text-cyan">200% (+6.0 dB)</strong></label>
+                    </div>
+                    <input type="range" id="range-boost-mult" min="100" max="400" step="10" value="200" class="form-slider">
+                    <div class="slider-presets">
+                      <button class="btn btn-xs btn-preset" type="button" data-mult="125">125% (+2 dB)</button>
+                      <button class="btn btn-xs btn-preset" type="button" data-mult="150">150% (+3.5 dB)</button>
+                      <button class="btn btn-xs btn-preset active" type="button" data-mult="200">200% (+6 dB)</button>
+                      <button class="btn btn-xs btn-preset" type="button" data-mult="250">250% (+8 dB)</button>
+                      <button class="btn btn-xs btn-preset" type="button" data-mult="300">300% (+9.5 dB)</button>
+                      <button class="btn btn-xs btn-preset" type="button" data-mult="400">400% (+12 dB)</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="info-alert">
+                  ℹ️ <strong>Video Safety:</strong> If you select a video file, the video track is copied without re-encoding, boosting audio in seconds.
+                </div>
+              </div>
+
+              <!-- 3. Video Converter Options -->
+              <div class="media-subform hidden" id="subform-convert-video">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Target Container</label>
+                    <select id="sel-video-format" class="form-select">
+                      <option value="mp4" selected>MP4 (Universal Compatibility)</option>
+                      <option value="mkv">MKV (Matroska Multimedia)</option>
+                      <option value="webm">WEBM (HTML5 / Modern Web)</option>
+                      <option value="avi">AVI (Legacy Format)</option>
+                      <option value="mov">MOV (Apple QuickTime)</option>
+                      <option value="gif">GIF (Animated Loop)</option>
+                    </select>
+                  </div>
+                  <div class="form-group" id="group-video-codec">
+                    <label>Video Codec</label>
+                    <select id="sel-video-codec" class="form-select">
+                      <option value="libx264" selected>H.264 / AVC (Most Compatible)</option>
+                      <option value="libx265">H.265 / HEVC (Ultra Small Size)</option>
+                      <option value="libvpx-vp9">VP9 (Google WebM)</option>
+                      <option value="copy">Stream Copy (Instant Remux)</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="form-row" id="group-video-scale-row">
+                  <div class="form-group">
+                    <label>Resolution</label>
+                    <select id="sel-video-res" class="form-select">
+                      <option value="original" selected>Original Resolution</option>
+                      <option value="1920:1080">1080p FHD (1920x1080)</option>
+                      <option value="1280:720">720p HD (1280x720)</option>
+                      <option value="854:480">480p SD (854x480)</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>Speed Preset</label>
+                    <select id="sel-video-preset" class="form-select">
+                      <option value="ultrafast">Ultrafast (Lowest CPU)</option>
+                      <option value="fast" selected>Fast (Balanced)</option>
+                      <option value="medium">Medium (Standard)</option>
+                      <option value="slow">Slow (Maximum Quality)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 4. Audio Converter Options -->
+              <div class="media-subform hidden" id="subform-convert-audio">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Target Audio Format</label>
+                    <select id="sel-audio-format" class="form-select">
+                      <option value="mp3" selected>MP3 (MPEG Audio Layer III)</option>
+                      <option value="wav">WAV (Uncompressed Lossless PCM)</option>
+                      <option value="flac">FLAC (Free Lossless Audio Codec)</option>
+                      <option value="m4a">AAC / M4A (Modern High-Efficiency)</option>
+                      <option value="ogg">OGG (Ogg Vorbis)</option>
+                      <option value="opus">OPUS (Ultra-Low Latency / High Fidelity)</option>
+                    </select>
+                  </div>
+                  <div class="form-group" id="group-audio-bitrate">
+                    <label>Bitrate Quality</label>
+                    <select id="sel-audio-bitrate" class="form-select">
+                      <option value="320k" selected>320 kbps (High Fidelity)</option>
+                      <option value="256k">256 kbps (High Quality)</option>
+                      <option value="192k">192 kbps (Standard)</option>
+                      <option value="128k">128 kbps (Compact)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 5. Image Converter Options -->
+              <div class="media-subform hidden" id="subform-convert-image">
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Target Image Format</label>
+                    <select id="sel-image-format" class="form-select">
+                      <option value="webp" selected>WEBP (Next-Gen Compressed)</option>
+                      <option value="png">PNG (Lossless with Alpha)</option>
+                      <option value="jpg">JPG / JPEG (Standard Photo)</option>
+                      <option value="ico">ICO (Windows Application Icon)</option>
+                      <option value="bmp">BMP (Bitmap)</option>
+                      <option value="tiff">TIFF (Print Quality)</option>
+                    </select>
+                  </div>
+                  <div class="form-group" id="group-image-quality">
+                    <label>Quality: <span id="lbl-img-quality">85%</span></label>
+                    <input type="range" id="range-img-quality" min="10" max="100" value="85" class="form-slider">
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>Resize / Scale</label>
+                  <select id="sel-image-scale" class="form-select">
+                    <option value="original" selected>Original Dimensions (100%)</option>
+                    <option value="50%">50% Scale (Half Size)</option>
+                    <option value="75%">75% Scale</option>
+                    <option value="200%">200% Upscale</option>
+                    <option value="1920:1080">1920x1080 (Full HD)</option>
+                    <option value="512:512">512x512 (Square Avatar)</option>
+                    <option value="256:256">256x256 (Icon)</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Destination Settings -->
+              <div class="destination-section">
+                <div class="form-group">
+                  <label>Output Directory</label>
+                  <div class="input-with-action">
+                    <input type="text" id="input-media-outdir" placeholder="Same directory as source file (Default)">
+                    <button class="btn btn-sm btn-secondary" id="btn-browse-outdir" type="button">📁 Select</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>Custom Filename (Optional)</label>
+                  <input type="text" id="input-media-custom-name" placeholder="Leave empty for automatic naming">
+                </div>
+              </div>
+
+              <!-- Start Button -->
+              <div class="action-footer">
+                <button class="btn btn-primary btn-lg btn-glow" id="btn-start-media-task" type="button">
+                  <span class="btn-icon">🚀</span> Start Conversion
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Column: Live Monitor & Conversion History -->
+          <div class="media-col-right">
+            <!-- Live Progress HUD -->
+            <div class="media-card progress-hud" id="media-progress-hud">
+              <div class="hud-header">
+                <div class="hud-status-badge">
+                  <span class="indicator-dot" id="dot-hud-status"></span>
+                  <span id="lbl-hud-status">IDLE</span>
+                </div>
+                <button class="btn btn-sm btn-rose hidden" id="btn-cancel-media" type="button">⏹ Cancel</button>
+              </div>
+
+              <div class="hud-body">
+                <div class="hud-progress-container">
+                  <div class="hud-bar-bg">
+                    <div class="hud-bar-fill" id="hud-bar-fill" style="width: 0%;"></div>
+                  </div>
+                  <div class="hud-percent" id="lbl-hud-percent">0.0%</div>
+                </div>
+
+                <div class="hud-metrics-grid">
+                  <div class="metric-card">
+                    <span class="metric-label">TIME PROCESSED</span>
+                    <strong class="metric-val" id="lbl-hud-time">00:00:00</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">TOTAL DURATION</span>
+                    <strong class="metric-val" id="lbl-hud-total">00:00:00</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">SPEED</span>
+                    <strong class="metric-val" id="lbl-hud-speed">-</strong>
+                  </div>
+                  <div class="metric-card">
+                    <span class="metric-label">ELAPSED</span>
+                    <strong class="metric-val" id="lbl-hud-elapsed">00:00</strong>
+                  </div>
+                </div>
+
+                <div class="hud-success-banner hidden" id="hud-success-banner">
+                  <div class="banner-icon">🎉</div>
+                  <div class="banner-text">
+                    <strong>Conversion Completed Successfully!</strong>
+                    <div class="text-dim" id="lbl-hud-output-path">-</div>
+                  </div>
+                  <div class="banner-actions">
+                    <button class="btn btn-sm btn-cyan" id="btn-open-result-file" type="button">▶️ Open Result</button>
+                    <button class="btn btn-sm btn-secondary" id="btn-reveal-result-folder" type="button">📂 Open Folder</button>
+                  </div>
+                </div>
+
+                <div class="hud-error-banner hidden" id="hud-error-banner">
+                  <div class="banner-icon">⚠️</div>
+                  <div class="banner-text">
+                    <strong id="lbl-hud-error-title">Conversion Failed</strong>
+                    <pre class="error-pre" id="lbl-hud-error-msg">-</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Conversion History Card -->
+            <div class="media-card history-card">
+              <div class="card-header">
+                <h3>📜 Recent Conversions</h3>
+                <button class="btn btn-xs btn-secondary" id="btn-clear-media-hist" type="button">🗑️ Clear</button>
+              </div>
+              <div class="history-list-scroll">
+                <table class="services-table media-hist-table">
+                  <thead>
+                    <tr>
+                      <th>TASK</th>
+                      <th>OUTPUT FILE</th>
+                      <th>SIZE</th>
+                      <th>DATE</th>
+                      <th style="text-align: right;">ACTIONS</th>
+                    </tr>
+                  </thead>
+                  <tbody id="media-history-tbody">
+                    <!-- Rendered dynamically -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============================================== -->
+  <!-- MODALS                                         -->
+  <!-- ============================================== -->
+
+  <!-- Add/Edit Service Modal -->
+  <div class="modal-overlay hidden" id="modal-service">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-service-title">➕ Add New Service</h3>
+        <button class="btn-close" id="btn-close-service-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="input-service-oldname">
+        <div class="form-group">
+          <label>Service Name</label>
+          <input type="text" id="input-service-name" placeholder="e.g. classify, ocr client">
+        </div>
+        <div class="form-group">
+          <label>Group</label>
+          <input type="text" id="input-service-group" placeholder="e.g. AI SDKs, OCR Services, default">
+        </div>
+        <div class="form-group">
+          <label>Command</label>
+          <input type="text" id="input-service-cmd" placeholder="e.g. python server.py, npm run dev, go run .">
+        </div>
+        <div class="form-group">
+          <label>Working Directory</label>
+          <div class="input-with-action">
+            <input type="text" id="input-service-cwd" placeholder="e.g. E:\ocr-fc\server">
+            <button class="btn btn-sm btn-secondary" id="btn-detect-venv">🔍 Auto Venv</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Port (Optional)</label>
+            <input type="number" id="input-service-port" placeholder="e.g. 8080">
+          </div>
+          <div class="form-group">
+            <label>Virtual Environment</label>
+            <input type="text" id="input-service-venv" placeholder="e.g. .venv">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Shortcut Badge</label>
+            <input type="text" id="input-service-shortcut" placeholder="e.g. Ctrl+Alt+1">
+          </div>
+          <div class="form-group" style="display: flex; align-items: flex-end; height: 100%;">
+            <label class="checkbox-label">
+              <input type="checkbox" id="chk-service-autorestart" checked> Auto-Restart on Crash
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-service">Cancel</button>
+        <button class="btn btn-primary" id="btn-save-service">Save Service</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage Groups Modal -->
+  <div class="modal-overlay hidden" id="modal-groups">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <h3>📁 Manage Service Groups</h3>
+        <button class="btn-close" id="btn-close-groups-modal">✕</button>
+      </div>
+      <div class="modal-body" id="modal-groups-body">
+        <!-- Rendered dynamically -->
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-done-groups">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Task Modal -->
+  <div class="modal-overlay hidden" id="modal-task">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>➕ Add New Task</h3>
+        <button class="btn-close" id="btn-close-task-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Task Title</label>
+          <input type="text" id="input-task-title" placeholder="What needs to be done?">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Project / Group</label>
+            <select id="select-task-project">
+              <option value="General">General</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Initial Column</label>
+            <select id="select-task-status">
+              <option value="todo" selected>To Do</option>
+              <option value="in_progress">In Progress</option>
+              <option value="done">Done</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Priority</label>
+            <select id="select-task-prio">
+              <option value="high">🔴 High</option>
+              <option value="normal" selected>🔵 Normal</option>
+              <option value="low">⚪ Low</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Notification Reminder</label>
+            <select id="select-task-reminder">
+              <option value="" selected>No Reminder</option>
+              <option value="5m">In 5 Minutes</option>
+              <option value="15m">In 15 Minutes</option>
+              <option value="30m">In 30 Minutes</option>
+              <option value="1h">In 1 Hour</option>
+              <option value="today18">Today at 18:00</option>
+              <option value="tomorrow9">Tomorrow at 09:00</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-task">Cancel</button>
+        <button class="btn btn-primary" id="btn-save-task">Create Task</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Account Modal -->
+  <div class="modal-overlay hidden" id="modal-cred">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>➕ Add Account to Vault</h3>
+        <button class="btn-close" id="btn-close-cred-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Platform / Service</label>
+          <input type="text" id="input-cred-platform" placeholder="e.g. GitHub, AWS, OpenAI">
+        </div>
+        <div class="form-group">
+          <label>Username / Email</label>
+          <input type="text" id="input-cred-username" placeholder="e.g. mohamed, user@domain.com">
+        </div>
+        <div class="form-group">
+          <label>Password / Secret</label>
+          <div class="input-with-action">
+            <input type="password" id="input-cred-pass" placeholder="••••••••••••">
+            <button class="btn btn-sm btn-secondary" id="btn-cred-gen-pass">🎲 Generate</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>URL (Optional)</label>
+          <input type="text" id="input-cred-url" placeholder="https://...">
+        </div>
+        <div class="form-group">
+          <label>Notes (Optional)</label>
+          <input type="text" id="input-cred-notes" placeholder="API keys, 2FA backup codes...">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-cred">Cancel</button>
+        <button class="btn btn-primary" id="btn-save-cred">Save Account</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Password Generator Modal -->
+  <div class="modal-overlay hidden" id="modal-genpass">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🎲 Password Generator</h3>
+        <button class="btn-close" id="btn-close-genpass-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="pass-result-box">
+          <input type="text" id="input-genpass-result" readonly>
+          <button class="btn btn-primary" id="btn-copy-genpass">📋 Copy</button>
+        </div>
+        <div class="form-group" style="margin-top: 14px;">
+          <label>Length: <span id="lbl-genpass-len">16</span> characters</label>
+          <input type="range" id="range-genpass-len" min="8" max="48" value="16">
+        </div>
+        <div class="form-row">
+          <label class="checkbox-label"><input type="checkbox" id="chk-gen-upper" checked> Uppercase (A-Z)</label>
+          <label class="checkbox-label"><input type="checkbox" id="chk-gen-lower" checked> Lowercase (a-z)</label>
+        </div>
+        <div class="form-row">
+          <label class="checkbox-label"><input type="checkbox" id="chk-gen-digits" checked> Digits (0-9)</label>
+          <label class="checkbox-label"><input type="checkbox" id="chk-gen-symbols" checked> Symbols (!@#$)</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-rerun-genpass">🔄 Generate New</button>
+        <button class="btn btn-primary" id="btn-done-genpass">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data Storage & Folder Import Modal -->
+  <div class="modal-overlay hidden" id="modal-storage">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <h3>📁 Data Storage Location & Import</h3>
+          <span class="modal-subtitle">Configure where application state, credentials, tasks, and configs are stored</span>
+        </div>
+        <button class="btn-close" id="btn-close-storage-modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- Active Folder Card -->
+        <div class="storage-current-box">
+          <div class="storage-box-label">CURRENT ACTIVE DATA FOLDER</div>
+          <div class="storage-box-path">
+            <span class="folder-glyph">📂</span>
+            <span id="lbl-modal-current-dir" class="path-text">Loading...</span>
+            <button class="btn btn-xs btn-secondary" id="btn-open-current-storage-dir" title="Open folder in Windows Explorer">📂 Explore</button>
+          </div>
+        </div>
+
+        <!-- Folder Picker / Input Box -->
+        <div class="form-group" style="margin-top: 16px;">
+          <label>Select New Storage Folder</label>
+          <div class="storage-picker-row">
+            <input type="text" id="input-new-storage-path" placeholder="e.g. D:\SharedPMData or \\server\process_data" />
+            <button class="btn btn-secondary" id="btn-browse-storage-folder">📂 Browse...</button>
+            <button class="btn btn-secondary" id="btn-inspect-storage-path">🔍 Scan</button>
+          </div>
+          <div class="form-help">Other users or teammates can pick this folder to load all existing services, tasks, and vault records automatically.</div>
+        </div>
+
+        <!-- Scan / Inspection Manifest -->
+        <div class="storage-inspection-card" id="storage-inspection-card">
+          <div class="inspection-header">
+            <span class="inspection-title">Folder Manifest & Import Preview</span>
+            <span class="badge badge-subtle" id="lbl-storage-scan-status">Ready</span>
+          </div>
+          <div class="storage-manifest-grid">
+            <div class="manifest-item" id="item-manifest-services">
+              <div class="manifest-icon">⚡</div>
+              <div class="manifest-info">
+                <div class="manifest-name">Services Config</div>
+                <div class="manifest-detail" id="lbl-manifest-services">services.json (0)</div>
+              </div>
+              <div class="manifest-status" id="badge-manifest-services">—</div>
+            </div>
+
+            <div class="manifest-item" id="item-manifest-tasks">
+              <div class="manifest-icon">📝</div>
+              <div class="manifest-info">
+                <div class="manifest-name">Kanban Tasks</div>
+                <div class="manifest-detail" id="lbl-manifest-tasks">todos.json (0)</div>
+              </div>
+              <div class="manifest-status" id="badge-manifest-tasks">—</div>
+            </div>
+
+            <div class="manifest-item" id="item-manifest-creds">
+              <div class="manifest-icon">🔐</div>
+              <div class="manifest-info">
+                <div class="manifest-name">Credentials Vault</div>
+                <div class="manifest-detail" id="lbl-manifest-creds">credentials.json (0)</div>
+              </div>
+              <div class="manifest-status" id="badge-manifest-creds">—</div>
+            </div>
+
+            <div class="manifest-item" id="item-manifest-clip">
+              <div class="manifest-icon">📋</div>
+              <div class="manifest-info">
+                <div class="manifest-name">Clipboard History</div>
+                <div class="manifest-detail" id="lbl-manifest-clip">clipboard_history.json (0)</div>
+              </div>
+              <div class="manifest-status" id="badge-manifest-clip">—</div>
+            </div>
+
+            <div class="manifest-item" id="item-manifest-jiggler">
+              <div class="manifest-icon">🐭</div>
+              <div class="manifest-info">
+                <div class="manifest-name">Mouse Jiggler Config</div>
+                <div class="manifest-detail" id="lbl-manifest-jiggler">jiggler_config.json</div>
+              </div>
+              <div class="manifest-status" id="badge-manifest-jiggler">—</div>
+            </div>
+
+            <div class="manifest-item" id="item-manifest-ytdl">
+              <div class="manifest-icon">📥</div>
+              <div class="manifest-info">
+                <div class="manifest-name">Downloader & History</div>
+                <div class="manifest-detail" id="lbl-manifest-ytdl">ytdl_config.json / downloads.json</div>
+              </div>
+              <div class="manifest-status" id="badge-manifest-ytdl">—</div>
+            </div>
+
+            <div class="manifest-item" id="item-manifest-media">
+              <div class="manifest-icon">🎬</div>
+              <div class="manifest-info">
+                <div class="manifest-name">Media Studio History</div>
+                <div class="manifest-detail" id="lbl-manifest-media">media_history.json</div>
+              </div>
+              <div class="manifest-status" id="badge-manifest-media">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Copy Data Option -->
+        <div class="storage-options-row">
+          <label class="checkbox-label">
+            <input type="checkbox" id="chk-copy-storage-data" checked />
+            <span>If the destination folder is empty or missing files, copy current data files over</span>
+          </label>
+        </div>
+
+        <div class="storage-feedback hidden" id="storage-feedback"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-storage">Close</button>
+        <button class="btn btn-primary" id="btn-apply-storage">
+          <span>🚀 Switch & Import Data</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
