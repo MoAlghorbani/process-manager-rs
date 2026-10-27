@@ -29,6 +29,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupNavigation();
   setupSplitHandle();
   setupServices();
+  setupPortKillerTab();
   setupJiggler();
   setupVault();
   setupTasks();
@@ -42,6 +43,14 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(pollJiggler, 1000);
   setInterval(pollDownloader, 1000);
   setInterval(pollMediaProgress, 800);
+  setInterval(() => {
+    if (currentTab === "tab-ports") {
+      const chk = document.getElementById("chk-auto-refresh-ports");
+      if (!chk || chk.checked) {
+        loadPortKillerTab();
+      }
+    }
+  }, 2500);
 
   // Initial Data Fetch
   loadStorageHeaderInfo();
@@ -53,6 +62,13 @@ document.addEventListener("DOMContentLoaded", () => {
   loadDownloader();
   loadMediaStudio();
 });
+
+window.switchTab = function (tabId) {
+  const btn = document.querySelector(`.nav-tab[data-tab="${tabId}"]`);
+  if (btn) {
+    btn.click();
+  }
+};
 
 function setupNavigation() {
   document.querySelectorAll(".nav-tab").forEach((btn) => {
@@ -68,6 +84,8 @@ function setupNavigation() {
       if (currentTab === "tab-services") {
         pollServices();
         pollLogs();
+      } else if (currentTab === "tab-ports") {
+        loadPortKillerTab();
       } else if (currentTab === "tab-vault") {
         loadCredentials();
         loadClipboard();
@@ -75,6 +93,8 @@ function setupNavigation() {
         loadTasks();
       } else if (currentTab === "tab-downloader") {
         loadDownloader();
+      } else if (currentTab === "tab-media") {
+        loadMediaStudio();
       }
     });
   });
@@ -283,51 +303,70 @@ function setupServices() {
     }
   });
 
-  // Port Killer Modal
+  // Port Killer Button in Services Toolbar - Switch to Tab
+  const btnPortKiller = document.getElementById("btn-port-killer");
+  if (btnPortKiller) {
+    btnPortKiller.addEventListener("click", () => {
+      window.switchTab("tab-ports");
+    });
+  }
+
+  // Port Killer Modal (fallback support)
   const modalPortKiller = document.getElementById("modal-port-killer");
-  document.getElementById("btn-port-killer").addEventListener("click", () => {
-    openPortKillerModal();
-    modalPortKiller.classList.remove("hidden");
-  });
-  document.getElementById("btn-close-port-killer").addEventListener("click", () => modalPortKiller.classList.add("hidden"));
-  document.getElementById("btn-cancel-port-killer").addEventListener("click", () => modalPortKiller.classList.add("hidden"));
-  document.getElementById("btn-refresh-ports").addEventListener("click", loadActivePorts);
+  if (modalPortKiller) {
+    const btnClose = document.getElementById("btn-close-port-killer");
+    if (btnClose) btnClose.addEventListener("click", () => modalPortKiller.classList.add("hidden"));
+    const btnCancel = document.getElementById("btn-cancel-port-killer");
+    if (btnCancel) btnCancel.addEventListener("click", () => modalPortKiller.classList.add("hidden"));
+    const btnRefresh = document.getElementById("btn-refresh-ports");
+    if (btnRefresh) btnRefresh.addEventListener("click", loadActivePorts);
 
-  document.getElementById("btn-execute-kill-port").addEventListener("click", async () => {
-    const inputEl = document.getElementById("input-kill-port");
-    const portVal = parseInt(inputEl.value, 10);
-    const feedback = document.getElementById("port-kill-feedback");
-    if (isNaN(portVal) || portVal <= 0 || portVal > 65535) {
-      feedback.textContent = "Please enter a valid port number (1-65535).";
-      feedback.className = "port-kill-feedback error";
-      feedback.classList.remove("hidden");
-      return;
+    const btnExec = document.getElementById("btn-execute-kill-port");
+    if (btnExec) {
+      btnExec.addEventListener("click", async () => {
+        const inputEl = document.getElementById("input-kill-port");
+        const portVal = parseInt(inputEl.value, 10);
+        const feedback = document.getElementById("port-kill-feedback");
+        if (isNaN(portVal) || portVal <= 0 || portVal > 65535) {
+          if (feedback) {
+            feedback.textContent = "Please enter a valid port number (1-65535).";
+            feedback.className = "port-kill-feedback error";
+            feedback.classList.remove("hidden");
+          }
+          return;
+        }
+
+        try {
+          const killedCount = await invoke("kill_port_task", { port: portVal });
+          if (feedback) {
+            if (killedCount > 0) {
+              feedback.textContent = `⚡ Success! Terminated ${killedCount} process(es) listening on port :${portVal}.`;
+              feedback.className = "port-kill-feedback success";
+            } else {
+              feedback.textContent = `ℹ️ Port :${portVal} is not occupied by any active process.`;
+              feedback.className = "port-kill-feedback info";
+            }
+            feedback.classList.remove("hidden");
+          }
+          showToast(killedCount > 0 ? `⚡ Freed port :${portVal} (${killedCount} process killed)` : `Port :${portVal} was already free`, killedCount > 0 ? "success" : "info");
+          await refreshAllPortViews();
+        } catch (err) {
+          if (feedback) {
+            feedback.textContent = `Error: ${err}`;
+            feedback.className = "port-kill-feedback error";
+            feedback.classList.remove("hidden");
+          }
+        }
+      });
     }
 
-    try {
-      const killedCount = await invoke("kill_port_task", { port: portVal });
-      if (killedCount > 0) {
-        feedback.textContent = `⚡ Success! Terminated ${killedCount} process(es) listening on port :${portVal}.`;
-        feedback.className = "port-kill-feedback success";
-        showToast(`⚡ Freed port :${portVal} (${killedCount} process killed)`, "success");
-      } else {
-        feedback.textContent = `ℹ️ Port :${portVal} is not occupied by any active process.`;
-        feedback.className = "port-kill-feedback info";
-        showToast(`Port :${portVal} was already free`, "info");
-      }
-      feedback.classList.remove("hidden");
-      await loadActivePorts();
-      pollServices();
-    } catch (err) {
-      feedback.textContent = `Error: ${err}`;
-      feedback.className = "port-kill-feedback error";
-      feedback.classList.remove("hidden");
+    const inputSearch = document.getElementById("input-search-ports");
+    if (inputSearch) {
+      inputSearch.addEventListener("input", (e) => {
+        renderActivePortsTable(e.target.value);
+      });
     }
-  });
-
-  document.getElementById("input-search-ports").addEventListener("input", (e) => {
-    renderActivePortsTable(e.target.value);
-  });
+  }
 }
 
 function updateLogStatusBadge() {
@@ -490,20 +529,298 @@ async function renderOpenPortsModal() {
 }
 
 // ==========================================
-// Port Killer State & Renderers
+// Port Killer State & Renderers (Dedicated Tab & Modal)
 // ==========================================
 
 let activePortsCache = [];
+let servicesCacheForPorts = [];
+let portFilterMode = "all";
+let portSearchQuery = "";
 
+async function refreshAllPortViews() {
+  await Promise.allSettled([
+    loadActivePorts(),
+    loadPortKillerTab(),
+    pollServices(),
+  ]);
+}
+
+function setupPortKillerTab() {
+  // 1. Quick Kill on Port
+  const inputEl = document.getElementById("tab-input-kill-port");
+  const btnKill = document.getElementById("tab-btn-execute-kill");
+  const feedback = document.getElementById("tab-port-kill-feedback");
+
+  const executeTabPortKill = async () => {
+    if (!inputEl) return;
+    const portVal = parseInt(inputEl.value, 10);
+    if (isNaN(portVal) || portVal <= 0 || portVal > 65535) {
+      if (feedback) {
+        feedback.textContent = "Please enter a valid port number (1-65535).";
+        feedback.className = "port-kill-feedback error";
+        feedback.classList.remove("hidden");
+      }
+      return;
+    }
+
+    try {
+      const killedCount = await invoke("kill_port_task", { port: portVal });
+      if (feedback) {
+        if (killedCount > 0) {
+          feedback.textContent = `⚡ Success! Terminated ${killedCount} process(es) listening on port :${portVal}.`;
+          feedback.className = "port-kill-feedback success";
+        } else {
+          feedback.textContent = `ℹ️ Port :${portVal} is not occupied by any active process.`;
+          feedback.className = "port-kill-feedback info";
+        }
+        feedback.classList.remove("hidden");
+      }
+      showToast(killedCount > 0 ? `⚡ Freed port :${portVal} (${killedCount} process killed)` : `Port :${portVal} was not occupied`, killedCount > 0 ? "success" : "info");
+      await refreshAllPortViews();
+    } catch (err) {
+      if (feedback) {
+        feedback.textContent = `Error: ${err}`;
+        feedback.className = "port-kill-feedback error";
+        feedback.classList.remove("hidden");
+      }
+      showToast(`Kill failed: ${err}`, "error");
+    }
+  };
+
+  if (btnKill) {
+    btnKill.addEventListener("click", executeTabPortKill);
+  }
+  if (inputEl) {
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        executeTabPortKill();
+      }
+    });
+  }
+
+  // 2. Filter Pills (All / Services / Web)
+  const pillsContainer = document.getElementById("port-filter-pills");
+  if (pillsContainer) {
+    pillsContainer.querySelectorAll(".pill").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        pillsContainer.querySelectorAll(".pill").forEach((p) => p.classList.remove("active"));
+        btn.classList.add("active");
+        portFilterMode = btn.getAttribute("data-filter") || "all";
+        renderPortsTabTable();
+      });
+    });
+  }
+
+  // 3. Live Search Input
+  const searchInput = document.getElementById("tab-input-search-ports");
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => {
+      portSearchQuery = e.target.value;
+      renderPortsTabTable();
+    });
+  }
+
+  // 4. Manual Refresh Button
+  const btnRefresh = document.getElementById("tab-btn-refresh-ports");
+  if (btnRefresh) {
+    btnRefresh.addEventListener("click", () => {
+      loadPortKillerTab();
+    });
+  }
+}
+
+async function loadPortKillerTab() {
+  try {
+    const [ports, summary] = await Promise.all([
+      invoke("get_active_ports"),
+      invoke("get_manager_summary"),
+    ]);
+
+    activePortsCache = ports || [];
+    servicesCacheForPorts = (summary && summary.services) ? summary.services.filter((s) => s.port > 0) : [];
+
+    // Telemetry Statistics Calculations
+    const activePortSet = new Set(activePortsCache.map((p) => p.port));
+    const activeServiceCount = servicesCacheForPorts.filter((s) => activePortSet.has(s.port)).length;
+
+    const elTotalPorts = document.getElementById("stat-total-ports");
+    if (elTotalPorts) elTotalPorts.textContent = activePortsCache.length;
+
+    const elServicePorts = document.getElementById("stat-service-ports");
+    if (elServicePorts) elServicePorts.textContent = servicesCacheForPorts.length;
+
+    const elActiveListeners = document.getElementById("stat-active-listeners");
+    if (elActiveListeners) elActiveListeners.textContent = activeServiceCount;
+
+    const lblServiceCount = document.getElementById("lbl-service-ports-count");
+    if (lblServiceCount) lblServiceCount.textContent = `${servicesCacheForPorts.length} Services`;
+
+    const countAllPorts = document.getElementById("count-all-ports");
+    if (countAllPorts) countAllPorts.textContent = activePortsCache.length;
+
+    const countServicePorts = document.getElementById("count-service-ports");
+    if (countServicePorts) countServicePorts.textContent = servicesCacheForPorts.length;
+
+    // Render Service Matrix & TCP Listeners Table
+    renderServicePortsGrid(activePortSet);
+    renderPortsTabTable();
+  } catch (err) {
+    console.error("Failed to load port killer tab data:", err);
+  }
+}
+
+function renderServicePortsGrid(activePortSet) {
+  const container = document.getElementById("service-ports-grid");
+  if (!container) return;
+
+  if (servicesCacheForPorts.length === 0) {
+    container.innerHTML = `<div style="grid-column: 1 / -1; color: var(--text-muted); font-size: 13px; text-align: center; padding: 24px;">No services with configured web ports found.</div>`;
+    return;
+  }
+
+  let html = "";
+  servicesCacheForPorts.forEach((s) => {
+    const isListening = activePortSet.has(s.port);
+    const procInfo = activePortsCache.find((p) => p.port === s.port);
+    const isRunning = s.status === "running";
+
+    const statusBadge = isRunning
+      ? `<span class="badge badge-emerald">RUNNING</span>`
+      : `<span class="badge badge-slate">STOPPED</span>`;
+
+    const listenerBadge = isListening
+      ? `<span class="stat-pill" style="border-color: rgba(52, 211, 153, 0.4);"><span class="stat-val stat-emerald">:${s.port} Listening</span></span>`
+      : `<span class="stat-pill" style="border-color: var(--border-subtle);"><span class="stat-val" style="color: var(--text-muted);">:${s.port} Inactive</span></span>`;
+
+    const occupantText = procInfo
+      ? `PID ${procInfo.pid} (${procInfo.process_name})`
+      : isListening
+      ? "Occupied"
+      : "Port Available";
+
+    html += `
+      <div class="service-port-card">
+        <div class="service-port-info">
+          <div class="service-port-title">
+            <span>${s.name}</span>
+            ${statusBadge}
+          </div>
+          <div style="margin: 4px 0;">
+            ${listenerBadge}
+          </div>
+          <div class="service-port-meta">
+            ${s.group ? `[${s.group}] · ` : ""}${occupantText}
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
+          <div style="display: flex; gap: 4px;">
+            <button class="btn btn-sm btn-sky" onclick="window.openServiceUrl(${s.port})" title="Open http://localhost:${s.port}">
+              🌐 Open ↗
+            </button>
+            <button class="btn btn-sm btn-rose" onclick="window.killPortDirectly(${s.port})" title="Kill process occupying port :${s.port}">
+              ⚡ Free Port
+            </button>
+          </div>
+          <button class="btn btn-sm ${isRunning ? 'btn-secondary' : 'btn-emerald'}" style="width: 100%; font-size: 11px; padding: 3px 8px;" onclick="window.toggleServiceByName('${s.name}')">
+            ${isRunning ? '⏹ Stop' : '▶ Start'}
+          </button>
+        </div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+function renderPortsTabTable() {
+  const tbody = document.getElementById("tab-ports-tbody");
+  if (!tbody) return;
+
+  const q = portSearchQuery.trim().toLowerCase();
+  const servicePortMap = new Map();
+  servicesCacheForPorts.forEach((s) => servicePortMap.set(s.port, s));
+
+  const filtered = activePortsCache.filter((item) => {
+    const matchedService = servicePortMap.get(item.port);
+
+    // 1. Filter by mode
+    if (portFilterMode === "services" && !matchedService) {
+      return false;
+    }
+    if (portFilterMode === "web") {
+      const isCommonWeb = item.port === 80 || item.port === 443 || item.port === 8080 || item.port === 8000;
+      const isDevPortRange = item.port >= 3000 && item.port <= 9999;
+      if (!isCommonWeb && !isDevPortRange) return false;
+    }
+
+    // 2. Filter by search query
+    if (q) {
+      const matchPort = item.port.toString().includes(q);
+      const matchName = item.process_name.toLowerCase().includes(q);
+      const matchPid = item.pid.toString().includes(q);
+      const matchService = matchedService && matchedService.name.toLowerCase().includes(q);
+      return matchPort || matchName || matchPid || matchService;
+    }
+
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">${q ? "No matching listening ports found." : "No listening TCP ports match current filter."}</td></tr>`;
+    return;
+  }
+
+  let html = "";
+  filtered.forEach((p) => {
+    const matchedService = servicePortMap.get(p.port);
+    const serviceBadge = matchedService
+      ? `<span class="badge badge-sky" title="Mapped to service: ${matchedService.name}">🎯 ${matchedService.name}</span>`
+      : `<span style="color: var(--text-muted); font-size: 11px;">—</span>`;
+
+    html += `
+      <tr>
+        <td><span class="port-link-badge">:${p.port}</span></td>
+        <td><strong style="color: #fff;">${p.process_name}</strong></td>
+        <td><code>${p.pid}</code></td>
+        <td>${serviceBadge}</td>
+        <td><span class="badge badge-emerald">LISTENING</span></td>
+        <td style="text-align: right;">
+          <div style="display: inline-flex; gap: 4px;">
+            <button class="btn btn-sm btn-sky" onclick="window.openServiceUrl(${p.port})" title="Open http://localhost:${p.port}">
+              🌐 Open
+            </button>
+            <button class="btn btn-sm btn-rose" onclick="window.killPortDirectly(${p.port})" title="Free port :${p.port}">
+              ⚡ Free Port
+            </button>
+            ${p.pid > 0 ? `
+              <button class="btn btn-sm btn-secondary" onclick="window.killPidDirectly(${p.pid}, '${p.process_name}')" title="Kill PID ${p.pid}">
+                💀 PID
+              </button>
+            ` : ""}
+          </div>
+        </td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+}
+
+// Fallback Port Killer Modal Handlers
 async function openPortKillerModal() {
-  document.getElementById("port-kill-feedback").classList.add("hidden");
-  document.getElementById("input-kill-port").value = "";
-  document.getElementById("input-search-ports").value = "";
+  const feedback = document.getElementById("port-kill-feedback");
+  if (feedback) feedback.classList.add("hidden");
+  const inputKill = document.getElementById("input-kill-port");
+  if (inputKill) inputKill.value = "";
+  const inputSearch = document.getElementById("input-search-ports");
+  if (inputSearch) inputSearch.value = "";
   await loadActivePorts();
 }
 
 async function loadActivePorts() {
   const tbody = document.getElementById("active-ports-tbody");
+  if (!tbody) return;
   tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 18px;">Scanning active listening ports...</td></tr>`;
   try {
     const ports = await invoke("get_active_ports");
@@ -516,6 +833,7 @@ async function loadActivePorts() {
 
 function renderActivePortsTable(filterText = "") {
   const tbody = document.getElementById("active-ports-tbody");
+  if (!tbody) return;
   const q = filterText.trim().toLowerCase();
 
   const filtered = activePortsCache.filter((item) => {
@@ -565,8 +883,7 @@ window.killPortDirectly = async (port) => {
     } else {
       showToast(`Port :${port} was not occupied`, "info");
     }
-    await loadActivePorts();
-    pollServices();
+    await refreshAllPortViews();
   } catch (err) {
     showToast(`Failed to free port :${port}: ${err}`, "error");
   }
@@ -579,10 +896,19 @@ window.killPidDirectly = async (pid, procName) => {
     if (ok) {
       showToast(`💀 Terminated PID ${pid} (${procName})`, "success");
     }
-    await loadActivePorts();
-    pollServices();
+    await refreshAllPortViews();
   } catch (err) {
     showToast(`Failed to terminate PID ${pid}: ${err}`, "error");
+  }
+};
+
+window.toggleServiceByName = async (name) => {
+  if (!name) return;
+  try {
+    await invoke("toggle_service", { name });
+    await refreshAllPortViews();
+  } catch (err) {
+    showToast(`Failed to toggle service ${name}: ${err}`, "error");
   }
 };
 

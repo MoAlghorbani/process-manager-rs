@@ -26,6 +26,9 @@
       <button class="nav-tab active" data-tab="tab-services" id="tab-btn-services">
         <span class="tab-icon">⚡</span> Services
       </button>
+      <button class="nav-tab" data-tab="tab-ports" id="tab-btn-ports">
+        <span class="tab-icon">🎯</span> Port Killer
+      </button>
       <button class="nav-tab" data-tab="tab-jiggler" id="tab-btn-jiggler">
         <span class="tab-icon">🐭</span> Jiggler
       </button>
@@ -900,6 +903,107 @@
                 </table>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 7: PORT KILLER & NETWORK SCAVENGER        -->
+    <!-- ============================================== -->
+    <section id="tab-ports" class="tab-pane">
+      <div class="ports-tab-layout">
+        <!-- Top Stats & Controls Header Card -->
+        <div class="ports-header-card">
+          <div class="ports-header-left">
+            <div class="ports-title-row">
+              <span class="ports-main-icon">⚡</span>
+              <div>
+                <h2>Port Killer & Process Scavenger</h2>
+                <p class="subtext">Scan active TCP listeners, inspect occupying processes, and eliminate EADDRINUSE port conflicts.</p>
+              </div>
+            </div>
+
+            <!-- Telemetry Stats Pills -->
+            <div class="ports-stats-row">
+              <div class="stat-pill">
+                <span class="stat-label">Listening Ports:</span>
+                <span class="stat-val" id="stat-total-ports">0</span>
+              </div>
+              <div class="stat-pill">
+                <span class="stat-label">Configured Service Ports:</span>
+                <span class="stat-val" id="stat-service-ports">0</span>
+              </div>
+              <div class="stat-pill">
+                <span class="stat-label">Active Listeners:</span>
+                <span class="stat-val stat-emerald" id="stat-active-listeners">0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Kill Form -->
+          <div class="ports-quick-kill-panel">
+            <label style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px;">Quick Kill by Port Number</label>
+            <div style="display: flex; gap: 8px; margin-top: 6px;">
+              <input type="number" id="tab-input-kill-port" placeholder="e.g. 8080, 3000, 5173" class="port-input-field" />
+              <button class="btn btn-rose" id="tab-btn-execute-kill">💀 Kill on Port</button>
+            </div>
+            <div id="tab-port-kill-feedback" class="port-kill-feedback hidden"></div>
+          </div>
+        </div>
+
+        <!-- Service Ports Matrix Card -->
+        <div class="ports-section-card">
+          <div class="section-card-header">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <h3>🎯 Configured Service Ports</h3>
+              <span class="badge badge-subtle" id="lbl-service-ports-count">0 Services</span>
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); margin: 0;">Quickly launch or free ports assigned to your managed services.</p>
+          </div>
+          <div class="service-ports-grid" id="service-ports-grid">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- All Active Listening Ports Section -->
+        <div class="ports-section-card active-ports-section">
+          <div class="section-card-header">
+            <div>
+              <h3>🌐 Active Listening TCP Ports</h3>
+              <p style="font-size: 12px; color: var(--text-muted); margin: 2px 0 0 0;">Live snapshot of all system processes listening for incoming connections.</p>
+            </div>
+            <div class="ports-table-actions">
+              <div class="filter-pills" id="port-filter-pills">
+                <button class="pill active" data-filter="all">All (<span id="count-all-ports">0</span>)</button>
+                <button class="pill" data-filter="services">Services (<span id="count-service-ports">0</span>)</button>
+                <button class="pill" data-filter="web">Web/Dev (3000-9999)</button>
+              </div>
+              <input type="text" id="tab-input-search-ports" placeholder="🔍 Search port, process, PID..." class="port-search-input" />
+              <label class="auto-refresh-label">
+                <input type="checkbox" id="chk-auto-refresh-ports" checked />
+                <span>Auto-Scan</span>
+              </label>
+              <button class="btn btn-secondary btn-sm" id="tab-btn-refresh-ports">🔄 Refresh</button>
+            </div>
+          </div>
+
+          <div class="ports-table-scroll">
+            <table class="services-table" id="tab-ports-table">
+              <thead>
+                <tr>
+                  <th style="width: 110px;">PORT</th>
+                  <th>PROCESS NAME</th>
+                  <th style="width: 90px;">PID</th>
+                  <th>SERVICE MAPPING</th>
+                  <th style="width: 100px;">STATE</th>
+                  <th style="width: 180px; text-align: right;">ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody id="tab-ports-tbody">
+                <!-- Rendered dynamically -->
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
