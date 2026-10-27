@@ -282,6 +282,52 @@ function setupServices() {
       await new Promise((r) => setTimeout(r, 120));
     }
   });
+
+  // Port Killer Modal
+  const modalPortKiller = document.getElementById("modal-port-killer");
+  document.getElementById("btn-port-killer").addEventListener("click", () => {
+    openPortKillerModal();
+    modalPortKiller.classList.remove("hidden");
+  });
+  document.getElementById("btn-close-port-killer").addEventListener("click", () => modalPortKiller.classList.add("hidden"));
+  document.getElementById("btn-cancel-port-killer").addEventListener("click", () => modalPortKiller.classList.add("hidden"));
+  document.getElementById("btn-refresh-ports").addEventListener("click", loadActivePorts);
+
+  document.getElementById("btn-execute-kill-port").addEventListener("click", async () => {
+    const inputEl = document.getElementById("input-kill-port");
+    const portVal = parseInt(inputEl.value, 10);
+    const feedback = document.getElementById("port-kill-feedback");
+    if (isNaN(portVal) || portVal <= 0 || portVal > 65535) {
+      feedback.textContent = "Please enter a valid port number (1-65535).";
+      feedback.className = "port-kill-feedback error";
+      feedback.classList.remove("hidden");
+      return;
+    }
+
+    try {
+      const killedCount = await invoke("kill_port_task", { port: portVal });
+      if (killedCount > 0) {
+        feedback.textContent = `⚡ Success! Terminated ${killedCount} process(es) listening on port :${portVal}.`;
+        feedback.className = "port-kill-feedback success";
+        showToast(`⚡ Freed port :${portVal} (${killedCount} process killed)`, "success");
+      } else {
+        feedback.textContent = `ℹ️ Port :${portVal} is not occupied by any active process.`;
+        feedback.className = "port-kill-feedback info";
+        showToast(`Port :${portVal} was already free`, "info");
+      }
+      feedback.classList.remove("hidden");
+      await loadActivePorts();
+      pollServices();
+    } catch (err) {
+      feedback.textContent = `Error: ${err}`;
+      feedback.className = "port-kill-feedback error";
+      feedback.classList.remove("hidden");
+    }
+  });
+
+  document.getElementById("input-search-ports").addEventListener("input", (e) => {
+    renderActivePortsTable(e.target.value);
+  });
 }
 
 function updateLogStatusBadge() {
@@ -432,6 +478,9 @@ async function renderOpenPortsModal() {
           <button class="btn btn-sm btn-sky" onclick="window.openServiceUrl(${s.port})" title="Open in default browser">
             🌐 Open ↗
           </button>
+          <button class="btn btn-sm btn-rose" onclick="window.killPortDirectly(${s.port})" title="Kill any process occupying port :${s.port}">
+            ⚡ Free Port
+          </button>
         </div>
       </div>
     `;
@@ -439,6 +488,198 @@ async function renderOpenPortsModal() {
 
   container.innerHTML = html;
 }
+
+// ==========================================
+// Port Killer State & Renderers
+// ==========================================
+
+let activePortsCache = [];
+
+async function openPortKillerModal() {
+  document.getElementById("port-kill-feedback").classList.add("hidden");
+  document.getElementById("input-kill-port").value = "";
+  document.getElementById("input-search-ports").value = "";
+  await loadActivePorts();
+}
+
+async function loadActivePorts() {
+  const tbody = document.getElementById("active-ports-tbody");
+  tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 18px;">Scanning active listening ports...</td></tr>`;
+  try {
+    const ports = await invoke("get_active_ports");
+    activePortsCache = ports || [];
+    renderActivePortsTable("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--rose); padding: 18px;">Failed to scan ports: ${err}</td></tr>`;
+  }
+}
+
+function renderActivePortsTable(filterText = "") {
+  const tbody = document.getElementById("active-ports-tbody");
+  const q = filterText.trim().toLowerCase();
+
+  const filtered = activePortsCache.filter((item) => {
+    if (!q) return true;
+    return (
+      item.port.toString().includes(q) ||
+      item.process_name.toLowerCase().includes(q) ||
+      item.pid.toString().includes(q)
+    );
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 18px;">${q ? "No matching listening ports found." : "No listening TCP ports detected."}</td></tr>`;
+    return;
+  }
+
+  let html = "";
+  filtered.forEach((p) => {
+    html += `
+      <tr>
+        <td><span class="port-link-badge">:${p.port}</span></td>
+        <td><strong style="color: #fff;">${p.process_name}</strong></td>
+        <td><code>${p.pid}</code></td>
+        <td style="text-align: right;">
+          <div style="display: inline-flex; gap: 4px;">
+            <button class="btn btn-sm btn-sky" onclick="window.openServiceUrl(${p.port})" title="Open http://localhost:${p.port}">
+              🌐
+            </button>
+            <button class="btn btn-sm btn-rose" onclick="window.killPortDirectly(${p.port})" title="Kill process tree on port :${p.port}">
+              💀 Kill
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+}
+
+window.killPortDirectly = async (port) => {
+  if (!port) return;
+  try {
+    const count = await invoke("kill_port_task", { port: parseInt(port, 10) });
+    if (count > 0) {
+      showToast(`⚡ Freed port :${port} (${count} process killed)`, "success");
+    } else {
+      showToast(`Port :${port} was not occupied`, "info");
+    }
+    await loadActivePorts();
+    pollServices();
+  } catch (err) {
+    showToast(`Failed to free port :${port}: ${err}`, "error");
+  }
+};
+
+window.killPidDirectly = async (pid, procName) => {
+  if (!pid) return;
+  try {
+    const ok = await invoke("kill_process_by_pid", { pid: parseInt(pid, 10) });
+    if (ok) {
+      showToast(`💀 Terminated PID ${pid} (${procName})`, "success");
+    }
+    await loadActivePorts();
+    pollServices();
+  } catch (err) {
+    showToast(`Failed to terminate PID ${pid}: ${err}`, "error");
+  }
+};
+
+// ==========================================
+// Toast Notification Engine
+// ==========================================
+
+function showToast(message, type = "info") {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+
+  const el = document.createElement("div");
+  el.className = `toast toast-${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+
+  setTimeout(() => {
+    el.style.opacity = "0";
+    el.style.transform = "translateY(12px) scale(0.95)";
+    setTimeout(() => el.remove(), 260);
+  }, 3200);
+}
+
+// ==========================================
+// In-App Keyboard Shortcuts Listener
+// ==========================================
+
+window.addEventListener("keydown", async (e) => {
+  const activeEl = document.activeElement;
+  if (
+    activeEl &&
+    (activeEl.tagName === "INPUT" ||
+      activeEl.tagName === "TEXTAREA" ||
+      activeEl.isContentEditable)
+  ) {
+    return;
+  }
+
+  // Construct shortcut key string, e.g. "Ctrl+Alt+1"
+  const parts = [];
+  if (e.ctrlKey) parts.push("Ctrl");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  if (e.metaKey) parts.push("Win");
+
+  const key = e.key.toUpperCase();
+  if (["CONTROL", "ALT", "SHIFT", "META"].includes(key)) {
+    return;
+  }
+  parts.push(key);
+  const shortcutStr = parts.join("+");
+
+  // 1. Check Mouse Jiggler shortcut (e.g. "Ctrl+Alt+J")
+  try {
+    const jigglerConfig = await invoke("get_jiggler_config");
+    if (
+      jigglerConfig &&
+      jigglerConfig.shortcut &&
+      jigglerConfig.shortcut.trim().toUpperCase() === shortcutStr.toUpperCase()
+    ) {
+      e.preventDefault();
+      const stats = await invoke("get_jiggler_stats");
+      if (stats.running) {
+        await invoke("stop_jiggler");
+        showToast("🐭 Mouse Jiggler Stopped [Ctrl+Alt+J]", "info");
+      } else {
+        await invoke("start_jiggler");
+        showToast("🐭 Mouse Jiggler Started [Ctrl+Alt+J]", "success");
+      }
+      return;
+    }
+  } catch (_) {}
+
+  // 2. Check Service shortcuts (e.g. "Ctrl+Alt+1" ... "Ctrl+Alt+6")
+  try {
+    const summary = await invoke("get_manager_summary");
+    if (summary && summary.services) {
+      const matched = summary.services.find(
+        (s) =>
+          s.shortcut &&
+          s.shortcut.trim().toUpperCase() === shortcutStr.toUpperCase()
+      );
+      if (matched) {
+        e.preventDefault();
+        const isRunning = matched.status === "running";
+        if (isRunning) {
+          await invoke("stop_service", { name: matched.name });
+          showToast(`⏹ Stopped '${matched.name}' [${shortcutStr}]`, "info");
+        } else {
+          await invoke("start_service", { name: matched.name });
+          showToast(`▶ Started '${matched.name}' [${shortcutStr}]`, "success");
+        }
+        pollServices();
+      }
+    }
+  } catch (_) {}
+});
 
 // Global Service Actions
 window.openServiceUrl = async (port) => {

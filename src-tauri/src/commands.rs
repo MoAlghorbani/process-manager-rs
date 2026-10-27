@@ -23,6 +23,7 @@ pub struct AppState {
     pub todo_store: Arc<TodoStore>,
     pub ytdl_engine: Arc<YtDlpEngine>,
     pub ffmpeg_engine: Arc<crate::ffmpeg::FFmpegEngine>,
+    pub hotkey_mgr: Arc<crate::hotkeys::HotkeyManager>,
 }
 
 // ==========================================
@@ -50,8 +51,15 @@ pub fn restart_service(name: String, state: State<'_, AppState>) -> bool {
 }
 
 #[tauri::command]
+pub fn toggle_service(name: String, state: State<'_, AppState>) -> bool {
+    state.pm.toggle_service(&name)
+}
+
+#[tauri::command]
 pub fn add_service(config: ServiceConfig, auto_start: bool, state: State<'_, AppState>) -> bool {
-    state.pm.add_service(config, auto_start)
+    let res = state.pm.add_service(config, auto_start);
+    state.hotkey_mgr.reload();
+    res
 }
 
 #[tauri::command]
@@ -61,12 +69,16 @@ pub fn update_service(
     restart: bool,
     state: State<'_, AppState>,
 ) -> bool {
-    state.pm.update_service(&old_name, config, restart)
+    let res = state.pm.update_service(&old_name, config, restart);
+    state.hotkey_mgr.reload();
+    res
 }
 
 #[tauri::command]
 pub fn delete_service(name: String, state: State<'_, AppState>) -> bool {
-    state.pm.delete_service(&name)
+    let res = state.pm.delete_service(&name);
+    state.hotkey_mgr.reload();
+    res
 }
 
 #[tauri::command]
@@ -148,6 +160,7 @@ pub fn get_jiggler_config(state: State<'_, AppState>) -> JigglerConfig {
 #[tauri::command]
 pub fn save_jiggler_config(config: JigglerConfig, state: State<'_, AppState>) {
     state.jiggler.save_config(config);
+    state.hotkey_mgr.reload();
 }
 
 #[tauri::command]
@@ -405,6 +418,25 @@ pub fn open_url(url: String) -> Result<(), String> {
         let _ = Command::new("open").arg(&target).spawn().map_err(|e| e.to_string())?;
         Ok(())
     }
+}
+
+// ==========================================
+// Port Killer & Process Scavenger Commands
+// ==========================================
+
+#[tauri::command]
+pub fn get_active_ports() -> Vec<crate::win32::PortProcessInfo> {
+    crate::win32::get_active_listening_ports()
+}
+
+#[tauri::command]
+pub fn kill_port_task(port: u16) -> usize {
+    crate::win32::free_port(port)
+}
+
+#[tauri::command]
+pub fn kill_process_by_pid(pid: u32) -> bool {
+    crate::win32::kill_task_by_pid(pid)
 }
 
 // ==========================================

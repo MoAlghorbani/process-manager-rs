@@ -437,6 +437,24 @@ impl ProcessManager {
         self.start_service(name)
     }
 
+    pub fn toggle_service(self: &Arc<Self>, name: &str) -> bool {
+        let is_running = {
+            let map = self.services.read().unwrap();
+            if let Some(s_lock) = map.get(name) {
+                let s = s_lock.lock().unwrap();
+                s.status == "running"
+            } else {
+                return false;
+            }
+        };
+
+        if is_running {
+            self.stop_service(name)
+        } else {
+            self.start_service(name)
+        }
+    }
+
     pub fn start_all(self: &Arc<Self>) {
         let names: Vec<String> = {
             let map = self.services.read().unwrap();

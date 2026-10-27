@@ -275,17 +275,128 @@ pub fn is_protected_process_name(name: &str) -> bool {
     false
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PortProcessInfo {
+    pub port: u16,
+    pub pid: u32,
+    pub process_name: String,
+    pub protocol: String,
+    pub state: String,
+}
+
+pub fn get_process_name_map() -> HashMap<u32, String> {
+    let mut map = HashMap::new();
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot.is_null() || snapshot == INVALID_HANDLE_VALUE {
+            return map;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+        if Process32FirstW(snapshot, &mut entry) != 0 {
+            loop {
+                let end = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
+                map.insert(entry.th32ProcessID, name);
+
+                if Process32NextW(snapshot, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snapshot);
+    }
+    map
+}
+
+pub fn get_active_listening_ports() -> Vec<PortProcessInfo> {
+    let mut list = Vec::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new("netstat");
+        cmd.args(["-ano", "-p", "tcp"]);
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let output = match cmd.output() {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+            Err(_) => return list,
+        };
+
+        let proc_map = get_process_name_map();
+        let mut seen = HashSet::new();
+
+        for line in output.lines() {
+            let line = line.trim();
+            if !line.starts_with("TCP") {
+                continue;
+            }
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 {
+                let local_addr = parts[1];
+                let state = if parts.len() >= 5 { parts[3] } else { "LISTENING" };
+                let pid_str = parts[parts.len() - 1];
+
+                if state.eq_ignore_ascii_case("LISTENING") {
+                    if let Some(idx) = local_addr.rfind(':') {
+                        if let Ok(port) = local_addr[idx + 1..].parse::<u16>() {
+                            if let Ok(pid) = pid_str.parse::<u32>() {
+                                let key = (port, pid);
+                                if !seen.contains(&key) {
+                                    seen.insert(key);
+                                    let name = proc_map
+                                        .get(&pid)
+                                        .cloned()
+                                        .unwrap_or_else(|| "unknown.exe".to_string());
+                                    list.push(PortProcessInfo {
+                                        port,
+                                        pid,
+                                        process_name: name,
+                                        protocol: "TCP".to_string(),
+                                        state: state.to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    list.sort_by_key(|p| p.port);
+    list
+}
+
+pub fn kill_task_by_pid(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    terminate_pid(pid);
+    kill_process_tree(pid);
+    true
+}
+
 pub fn free_port(port: u16) -> usize {
     if port == 0 {
         return 0;
     }
-    let output = match Command::new("netstat")
-        .args(["-ano", "-p", "tcp"])
-        .output()
-    {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
-        Err(_) => return 0,
+    #[cfg(windows)]
+    let output = {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new("netstat");
+        cmd.args(["-ano", "-p", "tcp"]);
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        match cmd.output() {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+            Err(_) => return 0,
+        }
     };
+    #[cfg(not(windows))]
+    let output = String::new();
 
     let my_pid = unsafe { GetCurrentProcessId() };
     let mut killed = HashSet::new();

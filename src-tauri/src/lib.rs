@@ -4,6 +4,7 @@ pub mod commands;
 pub mod credentials;
 pub mod embedded;
 pub mod ffmpeg;
+pub mod hotkeys;
 pub mod jiggler;
 pub mod manager;
 pub mod models;
@@ -15,6 +16,7 @@ use crate::clipboard::ClipboardWatcher;
 use crate::commands::AppState;
 use crate::credentials::CredentialStore;
 use crate::ffmpeg::FFmpegEngine;
+use crate::hotkeys::HotkeyManager;
 use crate::jiggler::JigglerEngine;
 use crate::manager::ProcessManager;
 use crate::todo::TodoStore;
@@ -35,10 +37,12 @@ pub fn run() {
     let todo_store = Arc::new(TodoStore::new());
     let ytdl_engine = Arc::new(YtDlpEngine::new());
     let ffmpeg_engine = Arc::new(FFmpegEngine::new());
+    let hotkey_mgr = Arc::new(HotkeyManager::new(pm.clone(), jiggler.clone()));
 
-    // Start background watchers
+    // Start background watchers & hotkey listener
     clipboard_watcher.start();
     todo_store.start_notification_worker();
+    hotkey_mgr.start();
 
     let state = AppState {
         pm: pm.clone(),
@@ -48,6 +52,7 @@ pub fn run() {
         todo_store: todo_store.clone(),
         ytdl_engine: ytdl_engine.clone(),
         ffmpeg_engine: ffmpeg_engine.clone(),
+        hotkey_mgr: hotkey_mgr.clone(),
     };
 
     tauri::Builder::default()
@@ -59,6 +64,7 @@ pub fn run() {
             commands::start_service,
             commands::stop_service,
             commands::restart_service,
+            commands::toggle_service,
             commands::add_service,
             commands::update_service,
             commands::delete_service,
@@ -110,6 +116,10 @@ pub fn run() {
             commands::open_folder,
             commands::open_file,
             commands::open_url,
+            // Port Killer & Scavenger
+            commands::get_active_ports,
+            commands::kill_port_task,
+            commands::kill_process_by_pid,
             // Media Studio (FFmpeg)
             commands::get_ffmpeg_info,
             commands::probe_media_file,
