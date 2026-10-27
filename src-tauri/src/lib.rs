@@ -109,6 +109,7 @@ pub fn run() {
             commands::cancel_download,
             commands::open_folder,
             commands::open_file,
+            commands::open_url,
             // Media Studio (FFmpeg)
             commands::get_ffmpeg_info,
             commands::probe_media_file,

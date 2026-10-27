@@ -67,6 +67,7 @@
         <div class="toolbar-right">
           <button class="btn btn-primary" id="btn-add-service">➕ Add Service</button>
           <button class="btn btn-secondary" id="btn-manage-groups">📁 Groups</button>
+          <button class="btn btn-sky" id="btn-open-ports" title="Open links with ports in browser">🌐 Open Links</button>
           <button class="btn btn-emerald" id="btn-start-all">▶ Start All</button>
           <button class="btn btn-rose" id="btn-stop-all">⏹ Stop All</button>
           <button class="btn btn-secondary" id="btn-restart-all">🔄 Restart All</button>
@@ -1229,6 +1230,33 @@
         <button class="btn btn-primary" id="btn-apply-storage">
           <span>🚀 Switch & Import Data</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Open Service Ports / Links -->
+  <div class="modal-backdrop hidden" id="modal-open-ports">
+    <div class="modal" style="max-width: 580px;">
+      <div class="modal-header">
+        <h3 id="modal-open-ports-title">🌐 Services with Web Ports</h3>
+        <button class="modal-close" id="btn-close-open-ports">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; gap: 10px;">
+          <p style="font-size: 12px; color: var(--text-muted); margin: 0;">
+            Launch web services in your default browser.
+          </p>
+          <button class="btn btn-sm btn-sky" id="btn-open-all-ports">
+            🚀 Open All Running (0)
+          </button>
+        </div>
+
+        <div id="open-ports-list" class="ports-list-container">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-open-ports">Close</button>
       </div>
     </div>
   </div>

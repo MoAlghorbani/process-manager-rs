@@ -263,6 +263,25 @@ function setupServices() {
   });
   document.getElementById("btn-close-groups-modal").addEventListener("click", () => modalGroups.classList.add("hidden"));
   document.getElementById("btn-done-groups").addEventListener("click", () => modalGroups.classList.add("hidden"));
+
+  // Open Web Links / Ports Modal
+  const modalOpenPorts = document.getElementById("modal-open-ports");
+  document.getElementById("btn-open-ports").addEventListener("click", async () => {
+    await renderOpenPortsModal();
+    modalOpenPorts.classList.remove("hidden");
+  });
+  document.getElementById("btn-close-open-ports").addEventListener("click", () => modalOpenPorts.classList.add("hidden"));
+  document.getElementById("btn-cancel-open-ports").addEventListener("click", () => modalOpenPorts.classList.add("hidden"));
+
+  document.getElementById("btn-open-all-ports").addEventListener("click", async () => {
+    const summary = await invoke("get_manager_summary");
+    if (!summary || !summary.services) return;
+    const runningWithPorts = summary.services.filter((s) => s.port && s.status === "running");
+    for (const s of runningWithPorts) {
+      await window.openServiceUrl(s.port);
+      await new Promise((r) => setTimeout(r, 120));
+    }
+  });
 }
 
 function updateLogStatusBadge() {
@@ -333,7 +352,10 @@ function renderServicesTable(services) {
     const isRunning = s.status === "running";
     const statusClass = `status-${s.status}`;
     const statusDot = isRunning ? "● RUNNING" : s.status === "stopped" ? "● STOPPED" : `● ${s.status.toUpperCase()}`;
-    const portPid = `${s.port ? `:${s.port}` : "-"} / ${s.pid || "-"}`;
+    const portBadge = s.port
+      ? `<button class="port-link-badge" onclick="window.openServiceUrl(${s.port})" title="Open http://localhost:${s.port} in browser">:${s.port} ↗</button>`
+      : `<span style="color: var(--text-dim);">-</span>`;
+    const portPid = `${portBadge} / ${s.pid ? `<code>${s.pid}</code>` : `<span style="color: var(--text-dim);">-</span>`}`;
     const ramRestarts = `${s.memory_mb > 0 ? `${s.memory_mb} MB` : "-"} (${s.restarts}r)`;
     const uptime = s.uptime_seconds > 0 ? `${s.uptime_seconds}s` : "-";
 
@@ -347,11 +369,16 @@ function renderServicesTable(services) {
         </td>
         <td><span class="badge badge-subtle">${s.group}</span></td>
         <td><span class="status-dot ${statusClass}">${statusDot}</span></td>
-        <td><code>${portPid}</code></td>
+        <td>${portPid}</td>
         <td><code>${ramRestarts}</code></td>
         <td>${uptime}</td>
         <td style="text-align: right;">
           <div style="display: inline-flex; gap: 4px;">
+            ${s.port ? `
+              <button class="btn btn-sm btn-sky" onclick="window.openServiceUrl(${s.port})" title="Open http://localhost:${s.port} in browser">
+                🌐 Open
+              </button>
+            ` : ""}
             <button class="btn btn-sm ${isRunning ? "btn-rose" : "btn-emerald"}" onclick="window.toggleService('${s.name}', ${isRunning})">
               ${isRunning ? "⏹ Stop" : "▶ Start"}
             </button>
@@ -368,7 +395,61 @@ function renderServicesTable(services) {
   tbody.innerHTML = html;
 }
 
+async function renderOpenPortsModal() {
+  const summary = await invoke("get_manager_summary");
+  const container = document.getElementById("open-ports-list");
+  const btnOpenAll = document.getElementById("btn-open-all-ports");
+  if (!summary || !summary.services) return;
+
+  const withPorts = summary.services.filter((s) => s.port);
+  const runningWithPorts = withPorts.filter((s) => s.status === "running");
+
+  btnOpenAll.textContent = `🚀 Open All Running (${runningWithPorts.length})`;
+  btnOpenAll.disabled = runningWithPorts.length === 0;
+
+  if (withPorts.length === 0) {
+    container.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 25px;">No services have configured ports. Edit a service to assign a port.</div>`;
+    return;
+  }
+
+  let html = "";
+  withPorts.forEach((s) => {
+    const isRunning = s.status === "running";
+    const statusClass = `status-${s.status}`;
+    const statusText = isRunning ? "RUNNING" : s.status.toUpperCase();
+
+    html += `
+      <div class="port-card">
+        <div class="port-card-info">
+          <div class="port-card-title">
+            <span>${s.name}</span>
+            <span class="badge badge-subtle">${s.group}</span>
+            <span class="status-dot ${statusClass}">● ${statusText}</span>
+          </div>
+          <div class="port-card-url">http://localhost:${s.port}</div>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-sm btn-sky" onclick="window.openServiceUrl(${s.port})" title="Open in default browser">
+            🌐 Open ↗
+          </button>
+        </div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
 // Global Service Actions
+window.openServiceUrl = async (port) => {
+  if (!port) return;
+  const url = `http://localhost:${port}`;
+  try {
+    await invoke("open_url", { url });
+  } catch (err) {
+    console.error("Failed to open URL:", err);
+  }
+};
 window.toggleService = async (name, isRunning) => {
   if (isRunning) {
     await invoke("stop_service", { name });

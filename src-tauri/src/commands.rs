@@ -383,6 +383,30 @@ pub fn open_file(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    let target = if url.starts_with("http://") || url.starts_with("https://") {
+        url
+    } else {
+        format!("http://{}", url)
+    };
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new("rundll32");
+        cmd.args(["url.dll,FileProtocolHandler", &target]);
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let _ = cmd.spawn().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("open").arg(&target).spawn().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
 // ==========================================
 // 6. FFmpeg Media Studio Commands
 // ==========================================

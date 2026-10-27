@@ -16,6 +16,7 @@ target/
 src-tauri/target/
 *.exe
 *.exe~
+*.old
 pm_rs.exe
 
 # Binaries & Bundled packages (embedded tools)
