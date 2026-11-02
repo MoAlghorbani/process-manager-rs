@@ -1,9 +1,8 @@
+pub mod chat;
 pub mod cli;
 pub mod clipboard;
 pub mod commands;
 pub mod credentials;
-pub mod embedded;
-pub mod ffmpeg;
 pub mod hotkeys;
 pub mod jiggler;
 pub mod manager;
@@ -12,10 +11,10 @@ pub mod todo;
 pub mod win32;
 pub mod ytdl;
 
+use crate::chat::ChatEngine;
 use crate::clipboard::ClipboardWatcher;
 use crate::commands::AppState;
 use crate::credentials::CredentialStore;
-use crate::ffmpeg::FFmpegEngine;
 use crate::hotkeys::HotkeyManager;
 use crate::jiggler::JigglerEngine;
 use crate::manager::ProcessManager;
@@ -25,23 +24,19 @@ use std::sync::Arc;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Background extraction of embedded tools (ffmpeg, ffprobe, yt-dlp) if not already present
-    std::thread::spawn(|| {
-        embedded::ensure_embedded_tools();
-    });
-
     let pm = Arc::new(ProcessManager::new());
     let jiggler = Arc::new(JigglerEngine::new());
     let cred_store = Arc::new(CredentialStore::new());
     let clipboard_watcher = Arc::new(ClipboardWatcher::new());
     let todo_store = Arc::new(TodoStore::new());
     let ytdl_engine = Arc::new(YtDlpEngine::new());
-    let ffmpeg_engine = Arc::new(FFmpegEngine::new());
+    let chat_engine = Arc::new(ChatEngine::new());
     let hotkey_mgr = Arc::new(HotkeyManager::new(pm.clone(), jiggler.clone()));
 
     // Start background watchers & hotkey listener
     clipboard_watcher.start();
     todo_store.start_notification_worker();
+    chat_engine.start();
     hotkey_mgr.start();
 
     let state = AppState {
@@ -51,7 +46,7 @@ pub fn run() {
         clipboard_watcher: clipboard_watcher.clone(),
         todo_store: todo_store.clone(),
         ytdl_engine: ytdl_engine.clone(),
-        ffmpeg_engine: ffmpeg_engine.clone(),
+        chat_engine: chat_engine.clone(),
         hotkey_mgr: hotkey_mgr.clone(),
     };
 
@@ -120,19 +115,25 @@ pub fn run() {
             commands::get_active_ports,
             commands::kill_port_task,
             commands::kill_process_by_pid,
-            // Media Studio (FFmpeg)
-            commands::get_ffmpeg_info,
-            commands::probe_media_file,
-            commands::detect_media_volume,
-            commands::start_media_conversion,
-            commands::cancel_media_conversion,
-            commands::get_media_progress,
-            commands::get_media_history,
-            commands::clear_media_history,
-            commands::pick_media_file,
-            commands::pick_media_directory,
-            commands::open_media_path,
-            commands::reveal_media_in_explorer,
+            // LAN Chat
+            commands::get_chat_config,
+            commands::save_chat_config,
+            commands::get_chat_peers,
+            commands::get_chat_messages,
+            commands::send_chat_message,
+            commands::send_chat_typing,
+            commands::send_chat_buzz,
+            commands::get_chat_typing_status,
+            commands::clear_chat_history,
+            // LAN File Transfers
+            commands::pick_file_to_send,
+            commands::pick_save_file_path,
+            commands::send_file_offer,
+            commands::accept_file_transfer,
+            commands::decline_file_transfer,
+            commands::cancel_file_transfer,
+            commands::get_file_transfers,
+            commands::send_desktop_notification,
             // Storage Settings
             commands::get_storage_info,
             commands::inspect_storage_dir,

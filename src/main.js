@@ -34,15 +34,16 @@ document.addEventListener("DOMContentLoaded", () => {
   setupVault();
   setupTasks();
   setupDownloader();
-  setupMediaStudio();
   setupStorageManager();
+  setupLanChat();
 
   // Background Telemetry Tickers
   setInterval(pollServices, 1500);
   setInterval(pollLogs, 1500);
   setInterval(pollJiggler, 1000);
   setInterval(pollDownloader, 1000);
-  setInterval(pollMediaProgress, 800);
+  setInterval(pollChatMessages, 1200);
+  setInterval(pollChatPeers, 3000);
   setInterval(() => {
     if (currentTab === "tab-ports") {
       const chk = document.getElementById("chk-auto-refresh-ports");
@@ -60,7 +61,9 @@ document.addEventListener("DOMContentLoaded", () => {
   loadClipboard();
   loadTasks();
   loadDownloader();
-  loadMediaStudio();
+  loadChatConfig();
+  pollChatPeers();
+  pollChatMessages();
 });
 
 window.switchTab = function (tabId) {
@@ -93,8 +96,11 @@ function setupNavigation() {
         loadTasks();
       } else if (currentTab === "tab-downloader") {
         loadDownloader();
-      } else if (currentTab === "tab-media") {
-        loadMediaStudio();
+      } else if (currentTab === "tab-chat") {
+        totalUnreadChatCount = 0;
+        updateChatUnreadBadges();
+        pollChatPeers();
+        pollChatMessages(true);
       }
     });
   });
@@ -653,84 +659,17 @@ async function loadPortKillerTab() {
     const elActiveListeners = document.getElementById("stat-active-listeners");
     if (elActiveListeners) elActiveListeners.textContent = activeServiceCount;
 
-    const lblServiceCount = document.getElementById("lbl-service-ports-count");
-    if (lblServiceCount) lblServiceCount.textContent = `${servicesCacheForPorts.length} Services`;
-
     const countAllPorts = document.getElementById("count-all-ports");
     if (countAllPorts) countAllPorts.textContent = activePortsCache.length;
 
     const countServicePorts = document.getElementById("count-service-ports");
     if (countServicePorts) countServicePorts.textContent = servicesCacheForPorts.length;
 
-    // Render Service Matrix & TCP Listeners Table
-    renderServicePortsGrid(activePortSet);
+    // Render TCP Listeners Table
     renderPortsTabTable();
   } catch (err) {
     console.error("Failed to load port killer tab data:", err);
   }
-}
-
-function renderServicePortsGrid(activePortSet) {
-  const container = document.getElementById("service-ports-grid");
-  if (!container) return;
-
-  if (servicesCacheForPorts.length === 0) {
-    container.innerHTML = `<div style="grid-column: 1 / -1; color: var(--text-muted); font-size: 13px; text-align: center; padding: 24px;">No services with configured web ports found.</div>`;
-    return;
-  }
-
-  let html = "";
-  servicesCacheForPorts.forEach((s) => {
-    const isListening = activePortSet.has(s.port);
-    const procInfo = activePortsCache.find((p) => p.port === s.port);
-    const isRunning = s.status === "running";
-
-    const statusBadge = isRunning
-      ? `<span class="badge badge-emerald">RUNNING</span>`
-      : `<span class="badge badge-slate">STOPPED</span>`;
-
-    const listenerBadge = isListening
-      ? `<span class="stat-pill" style="border-color: rgba(52, 211, 153, 0.4);"><span class="stat-val stat-emerald">:${s.port} Listening</span></span>`
-      : `<span class="stat-pill" style="border-color: var(--border-subtle);"><span class="stat-val" style="color: var(--text-muted);">:${s.port} Inactive</span></span>`;
-
-    const occupantText = procInfo
-      ? `PID ${procInfo.pid} (${procInfo.process_name})`
-      : isListening
-      ? "Occupied"
-      : "Port Available";
-
-    html += `
-      <div class="service-port-card">
-        <div class="service-port-info">
-          <div class="service-port-title">
-            <span>${s.name}</span>
-            ${statusBadge}
-          </div>
-          <div style="margin: 4px 0;">
-            ${listenerBadge}
-          </div>
-          <div class="service-port-meta">
-            ${s.group ? `[${s.group}] · ` : ""}${occupantText}
-          </div>
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-end;">
-          <div style="display: flex; gap: 4px;">
-            <button class="btn btn-sm btn-sky" onclick="window.openServiceUrl(${s.port})" title="Open http://localhost:${s.port}">
-              🌐 Open ↗
-            </button>
-            <button class="btn btn-sm btn-rose" onclick="window.killPortDirectly(${s.port})" title="Kill process occupying port :${s.port}">
-              ⚡ Free Port
-            </button>
-          </div>
-          <button class="btn btn-sm ${isRunning ? 'btn-secondary' : 'btn-emerald'}" style="width: 100%; font-size: 11px; padding: 3px 8px;" onclick="window.toggleServiceByName('${s.name}')">
-            ${isRunning ? '⏹ Stop' : '▶ Start'}
-          </button>
-        </div>
-      </div>
-    `;
-  });
-
-  container.innerHTML = html;
 }
 
 function renderPortsTabTable() {
@@ -1351,7 +1290,7 @@ window.togglePassVisibility = (id, actualPass) => {
   if (el.textContent === "••••••••••••") {
     el.textContent = actualPass;
     el.style.fontFamily = "var(--font-mono)";
-    el.style.color = "var(--accent-cyan)";
+    el.style.color = "var(--accent-red)";
   } else {
     el.textContent = "••••••••••••";
     el.style.fontFamily = "";
@@ -1420,8 +1359,12 @@ window.deleteClip = async (id) => {
 
 function escapeHtml(text) {
   const div = document.createElement("div");
-  div.textContent = text;
+  div.textContent = text || "";
   return div.innerHTML;
+}
+
+function escapeJs(str) {
+  return (str || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
 // ========================================================
@@ -1744,462 +1687,6 @@ async function pollDownloader() {
 }
 
 // ========================================================
-// 7. MEDIA STUDIO (FFMPEG) CONTROLLER
-// ========================================================
-
-let currentMediaMode = "video_to_mp3";
-let selectedMediaProbe = null;
-let lastMediaOutputPath = "";
-let isMediaJobRunning = false;
-
-function setupMediaStudio() {
-  // Mode selection buttons
-  document.querySelectorAll(".media-mode-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".media-mode-btn").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentMediaMode = btn.dataset.mode;
-      updateMediaModeUI();
-    });
-  });
-
-  // Browse Media file button
-  document.getElementById("btn-browse-media")?.addEventListener("click", async () => {
-    let filter = "all";
-    if (currentMediaMode === "video_to_mp3" || currentMediaMode === "convert_video") {
-      filter = "video";
-    } else if (currentMediaMode === "convert_audio") {
-      filter = "audio";
-    } else if (currentMediaMode === "convert_image") {
-      filter = "image";
-    }
-
-    const path = await invoke("pick_media_file", { filterType: filter });
-    if (path) {
-      document.getElementById("input-media-path").value = path;
-      inspectMediaFile(path);
-    }
-  });
-
-  // Drag & drop support on dropzone
-  const dropzone = document.getElementById("media-dropzone");
-  if (dropzone) {
-    dropzone.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      dropzone.classList.add("dragover");
-    });
-    dropzone.addEventListener("dragleave", () => {
-      dropzone.classList.remove("dragover");
-    });
-    dropzone.addEventListener("drop", (e) => {
-      e.preventDefault();
-      dropzone.classList.remove("dragover");
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        const file = e.dataTransfer.files[0];
-        const path = file.path || file.name;
-        if (path) {
-          document.getElementById("input-media-path").value = path;
-          inspectMediaFile(path);
-        }
-      }
-    });
-  }
-
-  // Path input change
-  document.getElementById("input-media-path")?.addEventListener("change", (e) => {
-    const p = e.target.value.trim();
-    if (p) inspectMediaFile(p);
-  });
-
-  // Volume analysis button
-  document.getElementById("btn-analyze-volume")?.addEventListener("click", async () => {
-    const path = document.getElementById("input-media-path").value.trim();
-    if (!path) return;
-    const btn = document.getElementById("btn-analyze-volume");
-    btn.disabled = true;
-    btn.textContent = "⏳ Analyzing...";
-
-    try {
-      const vol = await invoke("detect_media_volume", { filePath: path });
-      if (vol) {
-        document.getElementById("volume-analysis-box").classList.remove("hidden");
-        document.getElementById("lbl-vol-max").textContent = `${vol.max_volume_db.toFixed(1)} dB`;
-        document.getElementById("lbl-vol-mean").textContent = `${vol.mean_volume_db.toFixed(1)} dB`;
-        document.getElementById("lbl-vol-rec").textContent = `+${vol.recommended_boost_db.toFixed(1)} dB`;
-        document.getElementById("lbl-vol-rec-factor").textContent = `${vol.recommended_boost_multiplier.toFixed(2)}x`;
-
-        // Store recommended multiplier on button
-        const applyBtn = document.getElementById("btn-apply-rec-boost");
-        applyBtn.onclick = () => {
-          document.querySelector('.media-mode-btn[data-mode="boost_volume"]')?.click();
-          const targetPct = Math.round(vol.recommended_boost_multiplier * 100);
-          const slider = document.getElementById("range-boost-mult");
-          slider.value = Math.min(Math.max(targetPct, 100), 400);
-          updateBoostLabel(slider.value);
-        };
-      }
-    } catch (err) {
-      alert("Volume analysis failed: " + err);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "🔍 Analyze Peak Volume";
-    }
-  });
-
-  // Volume slider & presets
-  const boostSlider = document.getElementById("range-boost-mult");
-  if (boostSlider) {
-    boostSlider.addEventListener("input", (e) => {
-      updateBoostLabel(e.target.value);
-    });
-  }
-
-  document.querySelectorAll(".btn-preset").forEach((b) => {
-    b.addEventListener("click", () => {
-      document.querySelectorAll(".btn-preset").forEach((btn) => btn.classList.remove("active"));
-      b.classList.add("active");
-      const mult = b.dataset.mult;
-      if (boostSlider) {
-        boostSlider.value = mult;
-        updateBoostLabel(mult);
-      }
-    });
-  });
-
-  // Image quality slider
-  const imgQuality = document.getElementById("range-img-quality");
-  if (imgQuality) {
-    imgQuality.addEventListener("input", (e) => {
-      document.getElementById("lbl-img-quality").textContent = `${e.target.value}%`;
-    });
-  }
-
-  // Browse Output Directory
-  document.getElementById("btn-browse-outdir")?.addEventListener("click", async () => {
-    const dir = await invoke("pick_media_directory");
-    if (dir) {
-      document.getElementById("input-media-outdir").value = dir;
-    }
-  });
-
-  // Start Conversion Button
-  document.getElementById("btn-start-media-task")?.addEventListener("click", handleStartMediaTask);
-
-  // Cancel Conversion Button
-  document.getElementById("btn-cancel-media")?.addEventListener("click", async () => {
-    await invoke("cancel_media_conversion");
-  });
-
-  // Open Result buttons
-  document.getElementById("btn-open-result-file")?.addEventListener("click", async () => {
-    if (lastMediaOutputPath) {
-      await invoke("open_media_path", { path: lastMediaOutputPath });
-    }
-  });
-
-  document.getElementById("btn-reveal-result-folder")?.addEventListener("click", async () => {
-    if (lastMediaOutputPath) {
-      await invoke("reveal_media_in_explorer", { filePath: lastMediaOutputPath });
-    }
-  });
-
-  // Clear History
-  document.getElementById("btn-clear-media-hist")?.addEventListener("click", async () => {
-    if (confirm("Clear all media conversion history?")) {
-      await invoke("clear_media_history");
-      renderMediaHistory([]);
-    }
-  });
-}
-
-function updateBoostLabel(val) {
-  const mult = parseFloat(val) / 100.0;
-  const db = 20.0 * Math.log10(mult);
-  const dbFormatted = db >= 0 ? `+${db.toFixed(1)} dB` : `${db.toFixed(1)} dB`;
-  const lbl = document.getElementById("lbl-boost-val");
-  if (lbl) {
-    lbl.textContent = `${val}% (${dbFormatted})`;
-  }
-}
-
-function updateMediaModeUI() {
-  document.getElementById("subform-video-to-mp3")?.classList.add("hidden");
-  document.getElementById("subform-boost-volume")?.classList.add("hidden");
-  document.getElementById("subform-convert-video")?.classList.add("hidden");
-  document.getElementById("subform-convert-audio")?.classList.add("hidden");
-  document.getElementById("subform-convert-image")?.classList.add("hidden");
-
-  const titleMap = {
-    video_to_mp3: "🎵 Video to MP3 Extraction Settings",
-    boost_volume: "🔊 Audio Volume Amplification Settings",
-    convert_video: "📹 Video Transcoding Settings",
-    convert_audio: "🎧 Audio Transcoding Settings",
-    convert_image: "🖼️ Image Transcoding Settings",
-  };
-
-  const hintMap = {
-    video_to_mp3: "Select any video file (.mp4, .mkv, .avi, .mov, .webm, etc.)",
-    boost_volume: "Select any video or audio file to amplify its sound",
-    convert_video: "Select any video file to transcode or convert to GIF",
-    convert_audio: "Select any audio or video file to convert audio format",
-    convert_image: "Select any image file (.png, .jpg, .webp, .bmp, .ico, etc.)",
-  };
-
-  document.getElementById("lbl-options-title").textContent = titleMap[currentMediaMode] || "⚙️ Conversion Settings";
-  document.getElementById("lbl-file-source-hint").textContent = hintMap[currentMediaMode] || "Select source file";
-
-  const activeSubform = document.getElementById(`subform-${currentMediaMode.replace(/_/g, "-")}`);
-  if (activeSubform) {
-    activeSubform.classList.remove("hidden");
-  }
-}
-
-async function inspectMediaFile(filePath) {
-  try {
-    const probe = await invoke("probe_media_file", { filePath });
-    if (!probe) return;
-    selectedMediaProbe = probe;
-
-    document.getElementById("probe-badge").classList.remove("hidden");
-    document.getElementById("probe-file-name").textContent = probe.file_name;
-    document.getElementById("probe-format").textContent = probe.format.split(",")[0].toUpperCase();
-    document.getElementById("probe-size").textContent = `${probe.file_size_mb} MB`;
-    document.getElementById("probe-duration").textContent = `⏱️ ${probe.duration_formatted}`;
-
-    const streamsContainer = document.getElementById("probe-streams");
-    streamsContainer.innerHTML = "";
-
-    probe.streams.forEach((s) => {
-      const chip = document.createElement("span");
-      chip.className = "stream-chip";
-      if (s.codec_type === "video") {
-        chip.textContent = `🎬 ${s.codec_name.toUpperCase()} • ${s.resolution || "Unknown"} ${s.fps ? `@ ${s.fps}fps` : ""}`;
-      } else if (s.codec_type === "audio") {
-        chip.textContent = `🔊 ${s.codec_name.toUpperCase()} • ${s.channels ? `${s.channels}ch` : ""} ${s.sample_rate || ""} ${s.bitrate || ""}`;
-      } else {
-        chip.textContent = `📄 ${s.codec_type}: ${s.codec_name}`;
-      }
-      streamsContainer.appendChild(chip);
-    });
-
-    const volBtn = document.getElementById("btn-analyze-volume");
-    if (probe.has_audio) {
-      volBtn.classList.remove("hidden");
-    } else {
-      volBtn.classList.add("hidden");
-    }
-
-    document.getElementById("volume-analysis-box").classList.add("hidden");
-  } catch (err) {
-    console.error("Probe failed:", err);
-  }
-}
-
-async function handleStartMediaTask() {
-  const inputPath = document.getElementById("input-media-path").value.trim();
-  if (!inputPath) {
-    alert("Please select or enter a source media file.");
-    return;
-  }
-
-  const outDir = document.getElementById("input-media-outdir").value.trim();
-  const customName = document.getElementById("input-media-custom-name").value.trim();
-
-  const config = {
-    task_type: currentMediaMode,
-    input_path: inputPath,
-    output_dir: outDir || null,
-    custom_filename: customName || null,
-    target_format: "mp3",
-    audio_bitrate: null,
-    video_codec: null,
-    resolution: null,
-    preset: null,
-    volume_multiplier: null,
-    volume_db: null,
-    use_loudnorm: false,
-    image_quality: null,
-    image_scale: null,
-  };
-
-  if (currentMediaMode === "video_to_mp3") {
-    config.target_format = "mp3";
-    config.audio_bitrate = document.getElementById("sel-v2mp3-bitrate").value;
-  } else if (currentMediaMode === "boost_volume") {
-    const boostType = document.querySelector('input[name="boost_type"]:checked')?.value || "multiplier";
-    if (boostType === "loudnorm") {
-      config.use_loudnorm = true;
-    } else {
-      const multVal = parseFloat(document.getElementById("range-boost-mult").value);
-      config.volume_multiplier = multVal / 100.0;
-    }
-  } else if (currentMediaMode === "convert_video") {
-    config.target_format = document.getElementById("sel-video-format").value;
-    config.video_codec = document.getElementById("sel-video-codec").value;
-    config.resolution = document.getElementById("sel-video-res").value;
-    config.preset = document.getElementById("sel-video-preset").value;
-  } else if (currentMediaMode === "convert_audio") {
-    config.target_format = document.getElementById("sel-audio-format").value;
-    config.audio_bitrate = document.getElementById("sel-audio-bitrate").value;
-  } else if (currentMediaMode === "convert_image") {
-    config.target_format = document.getElementById("sel-image-format").value;
-    config.image_quality = parseInt(document.getElementById("range-img-quality").value, 10);
-    config.image_scale = document.getElementById("sel-image-scale").value;
-  }
-
-  document.getElementById("hud-success-banner").classList.add("hidden");
-  document.getElementById("hud-error-banner").classList.add("hidden");
-  document.getElementById("btn-cancel-media").classList.remove("hidden");
-  document.getElementById("lbl-hud-status").textContent = "STARTING...";
-  document.getElementById("dot-hud-status").className = "indicator-dot active";
-
-  try {
-    const jobId = await invoke("start_media_conversion", { config });
-    isMediaJobRunning = true;
-  } catch (err) {
-    alert("Conversion failed to start: " + err);
-    document.getElementById("lbl-hud-status").textContent = "FAILED";
-    document.getElementById("dot-hud-status").className = "indicator-dot";
-  }
-}
-
-async function pollMediaProgress() {
-  if (currentTab !== "tab-media" && !isMediaJobRunning) return;
-
-  const prog = await invoke("get_media_progress");
-  if (!prog) return;
-
-  if (prog.status === "running") {
-    isMediaJobRunning = true;
-    document.getElementById("lbl-hud-status").textContent = "CONVERTING";
-    document.getElementById("dot-hud-status").className = "indicator-dot active";
-    document.getElementById("btn-cancel-media").classList.remove("hidden");
-
-    document.getElementById("lbl-hud-percent").textContent = `${prog.progress_percent.toFixed(1)}%`;
-    document.getElementById("hud-bar-fill").style.width = `${prog.progress_percent}%`;
-
-    document.getElementById("lbl-hud-time").textContent = prog.current_time || "00:00:00";
-    document.getElementById("lbl-hud-total").textContent = prog.total_duration || "00:00:00";
-    document.getElementById("lbl-hud-speed").textContent = prog.speed || "-";
-
-    const mins = Math.floor(prog.elapsed_sec / 60);
-    const secs = prog.elapsed_sec % 60;
-    document.getElementById("lbl-hud-elapsed").textContent = `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  } else if (prog.status === "completed") {
-    if (isMediaJobRunning) {
-      isMediaJobRunning = false;
-      lastMediaOutputPath = prog.output_path;
-      document.getElementById("lbl-hud-status").textContent = "COMPLETED";
-      document.getElementById("dot-hud-status").className = "indicator-dot active";
-      document.getElementById("btn-cancel-media").classList.add("hidden");
-
-      document.getElementById("lbl-hud-percent").textContent = "100.0%";
-      document.getElementById("hud-bar-fill").style.width = "100%";
-
-      const banner = document.getElementById("hud-success-banner");
-      banner.classList.remove("hidden");
-      document.getElementById("lbl-hud-output-path").textContent = prog.output_path;
-
-      loadMediaStudio();
-    }
-  } else if (prog.status === "failed") {
-    if (isMediaJobRunning) {
-      isMediaJobRunning = false;
-      document.getElementById("lbl-hud-status").textContent = "ERROR";
-      document.getElementById("dot-hud-status").className = "indicator-dot";
-      document.getElementById("btn-cancel-media").classList.add("hidden");
-
-      const errBanner = document.getElementById("hud-error-banner");
-      errBanner.classList.remove("hidden");
-      document.getElementById("lbl-hud-error-msg").textContent = prog.error_msg || "Unknown conversion error";
-    }
-  } else if (prog.status === "cancelled") {
-    isMediaJobRunning = false;
-    document.getElementById("lbl-hud-status").textContent = "CANCELLED";
-    document.getElementById("dot-hud-status").className = "indicator-dot";
-    document.getElementById("btn-cancel-media").classList.add("hidden");
-  }
-}
-
-async function loadMediaStudio() {
-  try {
-    const info = await invoke("get_ffmpeg_info");
-    if (info) {
-      const lbl = document.getElementById("lbl-engine-status");
-      const pill = document.getElementById("media-engine-pill");
-      if (info.available) {
-        lbl.textContent = info.is_embedded
-          ? "Embedded FFmpeg Active (v9.0)"
-          : "System FFmpeg Active";
-        pill.title = `Path: ${info.path}\nGPU Acceleration: ${info.has_nvenc ? "NVENC/CUDA " : ""}${info.has_qsv ? "QSV " : ""}${info.has_amf ? "AMF" : ""}`;
-      } else {
-        lbl.textContent = "FFmpeg Engine Not Found";
-        pill.classList.remove("pill-engine");
-        pill.style.background = "rgba(244, 63, 94, 0.15)";
-        pill.style.color = "#fda4af";
-      }
-    }
-
-    const history = await invoke("get_media_history") || [];
-    renderMediaHistory(history);
-  } catch (err) {
-    console.error("Failed to load media studio info:", err);
-  }
-}
-
-function renderMediaHistory(list) {
-  const tbody = document.getElementById("media-history-tbody");
-  if (!tbody) return;
-  tbody.innerHTML = "";
-
-  if (list.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No media conversions yet.</td></tr>`;
-    return;
-  }
-
-  const taskLabels = {
-    video_to_mp3: "🎵 Video → MP3",
-    boost_volume: "🔊 Audio Boost",
-    convert_video: "📹 Video Transcode",
-    convert_audio: "🎧 Audio Transcode",
-    convert_image: "🖼️ Image Convert",
-  };
-
-  list.forEach((item) => {
-    const tr = document.createElement("tr");
-    const dateStr = item.completed_at ? new Date(item.completed_at).toLocaleTimeString() : "-";
-    const taskName = taskLabels[item.task_type] || item.task_type;
-
-    tr.innerHTML = `
-      <td><span class="badge badge-group">${taskName}</span></td>
-      <td>
-        <strong style="color: var(--text-main); font-size: 12px;">${item.output_file}</strong>
-        <div class="text-dim" style="font-size: 11px;">from ${item.input_file}</div>
-      </td>
-      <td><span class="badge">${item.output_size_mb.toFixed(1)} MB</span></td>
-      <td><span class="text-dim">${dateStr}</span></td>
-      <td style="text-align: right;">
-        <button class="btn btn-xs btn-cyan" onclick="openMediaItemFile('${escapeJs(item.output_file)}')">▶ Open</button>
-        <button class="btn btn-xs btn-secondary" onclick="revealMediaItemFolder('${escapeJs(item.output_file)}')">📂 Folder</button>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
-}
-
-window.openMediaItemFile = async (fileName) => {
-  await invoke("open_media_path", { path: fileName });
-};
-
-window.revealMediaItemFolder = async (fileName) => {
-  await invoke("reveal_media_in_explorer", { filePath: fileName });
-};
-
-function escapeJs(str) {
-  return (str || "").replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-}
-
-// ========================================================
 // 8. DATA STORAGE & IMPORT CONTROLLER
 // ========================================================
 
@@ -2265,7 +1752,7 @@ function setupStorageManager() {
 
   openCurrentBtn?.addEventListener("click", async () => {
     if (currentStorageDir) {
-      await invoke("open_media_path", { path: currentStorageDir });
+      await invoke("open_folder", { path: currentStorageDir });
     }
   });
 
@@ -2324,11 +1811,10 @@ function setupStorageManager() {
     updateManifestItem("clip", info.has_clipboard, `clipboard_history.json (${info.clips_count} clips)`);
     updateManifestItem("jiggler", info.has_jiggler, "jiggler_config.json");
     updateManifestItem("ytdl", info.has_downloader, "ytdl_config.json / downloads.json");
-    updateManifestItem("media", info.has_media, "media_history.json");
   }
 
   function renderManifestEmpty() {
-    ["services", "tasks", "creds", "clip", "jiggler", "ytdl", "media"].forEach((key) => {
+    ["services", "tasks", "creds", "clip", "jiggler", "ytdl"].forEach((key) => {
       updateManifestItem(key, false, "Not present in target folder");
     });
   }
@@ -2392,7 +1878,6 @@ function setupStorageManager() {
       loadCredentials();
       loadClipboard();
       loadDownloader();
-      loadMediaStudio();
     } catch (err) {
       console.error(err);
       if (feedback) {
@@ -2406,3 +1891,870 @@ function setupStorageManager() {
   });
 }
 
+
+
+// ========================================================
+// 9. LAN CHAT CONTROLLER
+// ========================================================
+
+let activeChatRecipient = "all"; // "all" for General LAN, or peer user_id
+let activeChatTitle = "# 🌐 General LAN";
+let activeChatDesc = "Public broadcast to all devices on the local subnet";
+let chatConfigCache = null;
+let chatPeersCache = [];
+let knownMessageIds = new Set();
+let unreadChatCounts = { all: 0 };
+let totalUnreadChatCount = 0;
+let lastTypingSentTime = 0;
+let peerSearchFilter = "";
+let activeTransfersMap = {};
+let knownTriggeredBuzzIds = new Set();
+let lastBuzzSentTime = 0;
+
+function setupLanChat() {
+  const inputMsg = document.getElementById("input-chat-message");
+  const btnSend = document.getElementById("btn-send-chat");
+  const btnScan = document.getElementById("btn-scan-peers");
+  const btnSettings = document.getElementById("btn-chat-settings");
+  const btnEditName = document.getElementById("btn-edit-chat-name");
+  const selStatus = document.getElementById("sel-my-status");
+  const btnClearConvo = document.getElementById("btn-clear-chat-convo");
+  const inputSearch = document.getElementById("input-search-chat");
+  const channelAll = document.getElementById("channel-item-all");
+  const btnAttach = document.getElementById("btn-chat-attach");
+
+  // Attach file button
+  btnAttach?.addEventListener("click", handleAttachFileClick);
+
+  // Buzz menu toggle & options
+  const btnBuzzToggle = document.getElementById("btn-chat-buzz-toggle");
+  const menuBuzz = document.getElementById("menu-chat-buzz");
+  const optHard = document.getElementById("opt-buzz-hard");
+  const optSoft = document.getElementById("opt-buzz-soft");
+
+  btnBuzzToggle?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    menuBuzz?.classList.toggle("hidden");
+  });
+
+  optHard?.addEventListener("click", () => {
+    menuBuzz?.classList.add("hidden");
+    handleSendBuzz("hard");
+  });
+
+  optSoft?.addEventListener("click", () => {
+    menuBuzz?.classList.add("hidden");
+    handleSendBuzz("soft");
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!menuBuzz?.contains(e.target) && e.target !== btnBuzzToggle) {
+      menuBuzz?.classList.add("hidden");
+    }
+  });
+
+  // Send message on click / Enter
+  btnSend?.addEventListener("click", handleSendChatMessage);
+  inputMsg?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendChatMessage();
+    }
+  });
+
+  // Typing event throttling
+  inputMsg?.addEventListener("input", () => {
+    const now = Date.now();
+    if (now - lastTypingSentTime > 2000) {
+      lastTypingSentTime = now;
+      invoke("send_chat_typing", { recipientId: activeChatRecipient }).catch(() => {});
+    }
+  });
+
+  // Switch to General Channel
+  channelAll?.addEventListener("click", () => {
+    selectChatRecipient("all", "# 🌐 General LAN", "Public broadcast to all devices on the local subnet");
+  });
+
+  // Status select
+  selStatus?.addEventListener("change", async (e) => {
+    if (chatConfigCache) {
+      chatConfigCache.status = e.target.value;
+      await invoke("save_chat_config", { config: chatConfigCache });
+      showToast(`Status set to: ${e.target.value.toUpperCase()}`, "info");
+    }
+  });
+
+  // Search filter
+  inputSearch?.addEventListener("input", (e) => {
+    peerSearchFilter = e.target.value.trim().toLowerCase();
+    renderChatPeersList();
+  });
+
+  // Scan LAN button
+  btnScan?.addEventListener("click", async () => {
+    showToast("Scanning local subnet for Process Manager peers...", "info");
+    await pollChatPeers();
+  });
+
+  // Clear convo button
+  btnClearConvo?.addEventListener("click", async () => {
+    const targetName = activeChatRecipient === "all" ? "General LAN" : "this conversation";
+    if (confirm(`Are you sure you want to clear chat history for ${targetName}?`)) {
+      await invoke("clear_chat_history", { recipient: activeChatRecipient });
+      knownMessageIds.clear();
+      await pollChatMessages();
+      showToast("Chat history cleared.", "info");
+    }
+  });
+
+  // Edit Name & Settings Modals
+  btnEditName?.addEventListener("click", openChatSettingsModal);
+  btnSettings?.addEventListener("click", openChatSettingsModal);
+
+  setupChatSettingsModal();
+}
+
+function selectChatRecipient(recipientId, title, desc) {
+  activeChatRecipient = recipientId;
+  activeChatTitle = title;
+  activeChatDesc = desc;
+
+  // Update UI header
+  const titleEl = document.getElementById("lbl-active-convo-title");
+  const descEl = document.getElementById("lbl-active-convo-desc");
+  const inputEl = document.getElementById("input-chat-message");
+  if (titleEl) titleEl.textContent = title;
+  if (descEl) descEl.textContent = desc;
+  if (inputEl) inputEl.placeholder = `Message ${title}... (Press Enter to send)`;
+
+  // Clear unread for this recipient
+  if (unreadChatCounts[recipientId]) {
+    unreadChatCounts[recipientId] = 0;
+    updateChatUnreadBadges();
+  }
+
+  // Active styles on sidebar
+  document.querySelectorAll(".chat-channel-item, .chat-peer-item").forEach((el) => {
+    el.classList.remove("active");
+  });
+
+  if (recipientId === "all") {
+    document.getElementById("channel-item-all")?.classList.add("active");
+  } else {
+    document.getElementById(`peer-item-${recipientId}`)?.classList.add("active");
+  }
+
+  // Refresh messages
+  pollChatMessages(true);
+}
+
+async function loadChatConfig() {
+  try {
+    const cfg = await invoke("get_chat_config");
+    if (!cfg) return;
+    chatConfigCache = cfg;
+
+    const usernameEl = document.getElementById("lbl-my-username");
+    const avatarEl = document.getElementById("lbl-my-avatar");
+    const hostnameEl = document.getElementById("lbl-my-hostname");
+    const statusSel = document.getElementById("sel-my-status");
+    const portEl = document.getElementById("lbl-chat-port");
+
+    if (usernameEl) usernameEl.textContent = cfg.username;
+    if (avatarEl) avatarEl.textContent = (cfg.username || "U").substring(0, 2).toUpperCase();
+    if (hostnameEl) hostnameEl.textContent = cfg.hostname;
+    if (statusSel) statusSel.value = cfg.status;
+    if (portEl) portEl.textContent = cfg.port;
+  } catch (err) {
+    console.error("Failed to load chat config:", err);
+  }
+}
+
+async function pollChatPeers() {
+  try {
+    const peers = (await invoke("get_chat_peers")) || [];
+    chatPeersCache = peers;
+
+    const onlineCount = peers.filter((p) => p.is_online).length;
+    const countEl = document.getElementById("lbl-online-peer-count");
+    const sidebarCountEl = document.getElementById("lbl-sidebar-peer-count");
+
+    if (countEl) countEl.textContent = onlineCount;
+    if (sidebarCountEl) sidebarCountEl.textContent = onlineCount;
+
+    renderChatPeersList();
+  } catch (err) {
+    console.error("Failed to poll chat peers:", err);
+  }
+}
+
+function renderChatPeersList() {
+  const container = document.getElementById("chat-peers-list");
+  if (!container) return;
+
+  const filtered = chatPeersCache.filter((p) => {
+    if (!peerSearchFilter) return true;
+    return (
+      p.username.toLowerCase().includes(peerSearchFilter) ||
+      p.hostname.toLowerCase().includes(peerSearchFilter) ||
+      p.ip.includes(peerSearchFilter)
+    );
+  });
+
+  if (filtered.length === 0) {
+    container.innerHTML = `
+      <div class="chat-empty-peers">
+        ${peerSearchFilter ? "No matching peers found." : "Scanning local network for devices running Process Manager..."}
+      </div>
+    `;
+    return;
+  }
+
+  let html = "";
+  filtered.forEach((p) => {
+    const initials = (p.username || "P").substring(0, 2).toUpperCase();
+    const isActive = activeChatRecipient === p.id;
+    const dotClass = !p.is_online
+      ? "status-dot-offline"
+      : p.status === "busy"
+      ? "status-dot-busy"
+      : p.status === "away"
+      ? "status-dot-away"
+      : "status-dot-online";
+
+    const unread = unreadChatCounts[p.id] || 0;
+    const unreadHtml = unread > 0 ? `<span class="channel-unread">${unread}</span>` : "";
+
+    html += `
+      <div class="chat-peer-item ${isActive ? "active" : ""}" id="peer-item-${p.id}" onclick="selectChatRecipient('${p.id}', '${escapeJs(p.username)}', '${escapeJs(p.hostname)} • ${p.ip}')">
+        <div class="chat-peer-avatar">
+          <span>${initials}</span>
+          <span class="chat-status-dot ${dotClass}"></span>
+        </div>
+        <div class="chat-peer-info">
+          <div class="chat-peer-name">${p.username}</div>
+          <div class="chat-peer-meta">${p.hostname} • ${p.ip}</div>
+        </div>
+        ${unreadHtml}
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+async function handleAttachFileClick() {
+  if (activeChatRecipient === "all") {
+    showToast("Please select a specific peer from the left sidebar to send a file.", "warning");
+    return;
+  }
+
+  try {
+    const file = await invoke("pick_file_to_send");
+    if (!file) return;
+
+    const formattedSize = formatBytes(file.size);
+    const confirmMsg = `Send "${file.name}" (${formattedSize}) to ${activeChatTitle}?`;
+    if (!confirm(confirmMsg)) return;
+
+    showToast(`Offering "${file.name}" to peer...`, "info");
+    await invoke("send_file_offer", {
+      recipientId: activeChatRecipient,
+      filePath: file.path,
+    });
+    await pollChatMessages(true);
+  } catch (err) {
+    showToast(`Failed to send file: ${err}`, "error");
+  }
+}
+
+function formatBytes(bytes) {
+  if (bytes === undefined || bytes === null) return "0 B";
+  const num = typeof bytes === "number" ? bytes : Number(bytes);
+  if (num === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const i = Math.floor(Math.log(num) / Math.log(k));
+  return parseFloat((num / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
+
+function formatSpeed(bytesPerSec) {
+  if (!bytesPerSec || bytesPerSec <= 0) return "0 B/s";
+  return `${formatBytes(bytesPerSec)}/s`;
+}
+
+function formatEta(sec) {
+  if (!sec || sec <= 0) return "--";
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return `${h}h ${remM}m`;
+}
+
+window.acceptTransfer = async (transferId) => {
+  try {
+    showToast("Starting file download...", "info");
+    await invoke("accept_file_transfer", { transferId, savePath: null });
+    await pollChatMessages();
+  } catch (err) {
+    showToast(`Failed to accept transfer: ${err}`, "error");
+  }
+};
+
+window.saveAsTransfer = async (transferId, defaultName) => {
+  try {
+    const savePath = await invoke("pick_save_file_path", { defaultName });
+    if (!savePath) return;
+    showToast("Starting file download...", "info");
+    await invoke("accept_file_transfer", { transferId, savePath });
+    await pollChatMessages();
+  } catch (err) {
+    showToast(`Failed to start download: ${err}`, "error");
+  }
+};
+
+window.declineTransfer = async (transferId) => {
+  try {
+    await invoke("decline_file_transfer", { transferId });
+    await pollChatMessages();
+    showToast("Transfer declined.", "info");
+  } catch (err) {
+    showToast(`Error: ${err}`, "error");
+  }
+};
+
+window.cancelTransfer = async (transferId) => {
+  try {
+    await invoke("cancel_file_transfer", { transferId });
+    await pollChatMessages();
+    showToast("Transfer cancelled.", "info");
+  } catch (err) {
+    showToast(`Error: ${err}`, "error");
+  }
+};
+
+window.openDownloadedFile = async (filePath) => {
+  if (!filePath) return;
+  try {
+    await invoke("open_file", { path: filePath });
+  } catch (err) {
+    showToast(`Could not open file: ${err}`, "error");
+  }
+};
+
+window.openFolderOfFile = async (filePath) => {
+  if (!filePath) return;
+  try {
+    await invoke("open_folder", { path: filePath });
+  } catch (err) {
+    showToast(`Could not open folder: ${err}`, "error");
+  }
+};
+
+
+function triggerBuzzEffect(buzzType, isMine = false) {
+  const animClass = buzzType === "hard" ? "hard-buzz-active" : "soft-buzz-active";
+  const duration = buzzType === "hard" ? 750 : 450;
+
+  document.body.classList.remove("hard-buzz-active", "soft-buzz-active");
+  void document.body.offsetWidth;
+  document.body.classList.add(animClass);
+  setTimeout(() => {
+    document.body.classList.remove(animClass);
+  }, duration);
+
+  if (chatConfigCache?.sound_notifications !== false) {
+    if (buzzType === "hard") {
+      playHardBuzzSound();
+    } else {
+      playSoftBuzzSound();
+    }
+  }
+
+  if (!isMine) {
+    const label = buzzType === "hard" ? "⚡ HARD BUZZ" : "🔔 Soft Buzz";
+    showToast(`${label} received!`, buzzType === "hard" ? "warning" : "info");
+  }
+}
+
+function playHardBuzzSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+
+    [0, 0.22].forEach((offset) => {
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc1.type = "sawtooth";
+      osc1.frequency.setValueAtTime(160, now + offset);
+      osc1.frequency.exponentialRampToValueAtTime(130, now + offset + 0.16);
+
+      osc2.type = "square";
+      osc2.frequency.setValueAtTime(115, now + offset);
+      osc2.frequency.exponentialRampToValueAtTime(95, now + offset + 0.16);
+
+      gain.gain.setValueAtTime(0.35, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + offset + 0.16);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc1.start(now + offset);
+      osc2.start(now + offset);
+      osc1.stop(now + offset + 0.17);
+      osc2.stop(now + offset + 0.17);
+    });
+  } catch (_) {}
+}
+
+function playSoftBuzzSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+
+    [0, 0.16].forEach((offset, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sine";
+      const startFreq = idx === 0 ? 540 : 720;
+      const endFreq = idx === 0 ? 680 : 860;
+      osc.frequency.setValueAtTime(startFreq, now + offset);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, now + offset + 0.14);
+
+      gain.gain.setValueAtTime(0.2, now + offset);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.14);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.15);
+    });
+  } catch (_) {}
+}
+
+async function handleSendBuzz(buzzType) {
+  const now = Date.now();
+  const cooldownRemaining = 4000 - (now - lastBuzzSentTime);
+  if (cooldownRemaining > 0) {
+    const sec = Math.ceil(cooldownRemaining / 1000);
+    showToast(`Please wait ${sec}s before sending another buzz.`, "warning");
+    return;
+  }
+  lastBuzzSentTime = now;
+
+  try {
+    const bType = buzzType === "hard" ? "hard" : "soft";
+    triggerBuzzEffect(bType, true);
+
+    const msg = await invoke("send_chat_buzz", {
+      recipientId: activeChatRecipient,
+      buzzType: bType,
+    });
+    if (msg) {
+      knownMessageIds.add(msg.id);
+      knownTriggeredBuzzIds.add(msg.id);
+    }
+    await pollChatMessages(true);
+    showToast(bType === "hard" ? "⚡ Sent Hard Buzz!" : "🔔 Sent Soft Buzz.", "success");
+  } catch (err) {
+    showToast(`Failed to send buzz: ${err}`, "error");
+  }
+}
+
+async function pollChatMessages(forceScroll = false) {
+  try {
+    // Fetch active transfers for live speed/progress
+    try {
+      const activeTransfersList = (await invoke("get_file_transfers")) || [];
+      activeTransfersMap = {};
+      activeTransfersList.forEach((t) => {
+        activeTransfersMap[t.transfer_id] = t;
+      });
+    } catch (_) {}
+
+    const msgs = (await invoke("get_chat_messages", { recipient: activeChatRecipient })) || [];
+    renderChatMessages(msgs, forceScroll);
+
+    // Poll typing status
+    const typingUsers = (await invoke("get_chat_typing_status", { recipient: activeChatRecipient })) || [];
+    const typingBar = document.getElementById("chat-typing-bar");
+    const typingText = document.getElementById("chat-typing-text");
+    if (typingBar && typingText) {
+      if (typingUsers.length > 0) {
+        typingText.textContent = `${typingUsers.join(", ")} ${typingUsers.length > 1 ? "are" : "is"} typing...`;
+        typingBar.classList.remove("hidden");
+      } else {
+        typingBar.classList.add("hidden");
+      }
+    }
+  } catch (err) {
+    console.error("Failed to poll chat messages:", err);
+  }
+}
+
+function renderChatMessages(msgs, forceScroll = false) {
+  const container = document.getElementById("chat-messages-container");
+  if (!container) return;
+
+  const isScrolledNearBottom =
+    container.scrollHeight - container.scrollTop - container.clientHeight < 120;
+
+  // Detect new incoming messages for audio chime & unread counting
+  let hasNewOtherMsg = false;
+  msgs.forEach((m) => {
+    if (!knownMessageIds.has(m.id)) {
+      knownMessageIds.add(m.id);
+      if (!m.is_mine) {
+        hasNewOtherMsg = true;
+        if (currentTab !== "tab-chat") {
+          totalUnreadChatCount++;
+          const targetKey = m.recipient_id === "all" ? "all" : m.sender_id;
+          unreadChatCounts[targetKey] = (unreadChatCounts[targetKey] || 0) + 1;
+          updateChatUnreadBadges();
+        }
+      }
+    }
+  });
+
+  if (hasNewOtherMsg && chatConfigCache?.sound_notifications) {
+    playChatNotificationSound();
+  }
+
+  if (msgs.length === 0) {
+    const channelNotice =
+      activeChatRecipient === "all"
+        ? "Joined # General LAN. All broadcast messages are delivered directly to devices on the same subnet."
+        : `Direct conversation with ${activeChatTitle}. End-to-end local network message stream.`;
+
+    container.innerHTML = `
+      <div class="chat-system-msg">
+        💬 ${channelNotice}
+      </div>
+    `;
+    return;
+  }
+
+  let html = `
+    <div class="chat-system-msg">
+      💬 Messages in this room are exchanged over the local network via UDP. Large files stream directly via TCP.
+    </div>
+  `;
+
+  msgs.forEach((m) => {
+    const initials = (m.sender_name || "U").substring(0, 2).toUpperCase();
+    const timeFormatted = formatChatTime(m.timestamp);
+
+    let contentHtml = "";
+    if (m.file_info) {
+      const fi = m.file_info;
+      const live = activeTransfersMap[fi.transfer_id];
+      const status = live ? live.status : fi.status;
+      const progress = live ? live.progress : (fi.progress || 0);
+      const bytesTransferred = live ? live.bytes_transferred : (fi.bytes_transferred || 0);
+      const speed = live ? live.speed_bps : 0;
+      const eta = live ? live.eta_sec : 0;
+      const savePath = live?.save_path || fi.save_path;
+      const errorMsg = live?.error || fi.error;
+
+      let actionsHtml = "";
+      if (status === "offered") {
+        if (m.is_mine) {
+          actionsHtml = `
+            <div class="file-card-waiting">Waiting for peer to accept...</div>
+            <div class="file-card-actions">
+              <button class="btn btn-secondary btn-xs" onclick="cancelTransfer('${fi.transfer_id}')">✖ Cancel</button>
+            </div>
+          `;
+        } else {
+          actionsHtml = `
+            <div class="file-card-actions">
+              <button class="btn btn-primary btn-sm" onclick="acceptTransfer('${fi.transfer_id}')">✔ Accept (Downloads)</button>
+              <button class="btn btn-secondary btn-sm" onclick="saveAsTransfer('${fi.transfer_id}', '${escapeJs(fi.file_name)}')">📁 Save As...</button>
+              <button class="btn btn-secondary btn-sm" onclick="declineTransfer('${fi.transfer_id}')">✖ Decline</button>
+            </div>
+          `;
+        }
+      } else if (status === "transferring") {
+        actionsHtml = `
+          <div class="file-card-progress-wrap">
+            <div class="file-card-progress-bar" style="width: ${progress.toFixed(1)}%;"></div>
+          </div>
+          <div class="file-card-stats">
+            <span>${formatBytes(bytesTransferred)} / ${formatBytes(fi.file_size)} (${progress.toFixed(1)}%)</span>
+            <span>${formatSpeed(speed)} • ETA: ${formatEta(eta)}</span>
+          </div>
+          <div class="file-card-actions">
+            <button class="btn btn-secondary btn-xs" onclick="cancelTransfer('${fi.transfer_id}')">✖ Cancel</button>
+          </div>
+        `;
+      } else if (status === "completed") {
+        if (savePath) {
+          actionsHtml = `
+            <div class="file-card-done-text">✔ File saved successfully</div>
+            <div class="file-card-actions">
+              <button class="btn btn-primary btn-sm" onclick="openDownloadedFile('${escapeJs(savePath)}')">📂 Open File</button>
+              <button class="btn btn-secondary btn-sm" onclick="openFolderOfFile('${escapeJs(savePath)}')">📁 Show in Folder</button>
+            </div>
+          `;
+        } else {
+          actionsHtml = `<div class="file-card-done-text">✔ Sent successfully</div>`;
+        }
+      } else if (status === "declined") {
+        actionsHtml = `<div class="file-card-muted-text">Transfer was declined.</div>`;
+      } else if (status === "cancelled") {
+        actionsHtml = `<div class="file-card-muted-text">Transfer was cancelled.</div>`;
+      } else if (status === "failed") {
+        actionsHtml = `<div class="file-card-error-text">Failed: ${escapeHtml(errorMsg || "Connection error")}</div>`;
+      }
+
+      contentHtml = `
+        <div class="chat-file-card">
+          <div class="file-card-header">
+            <div class="file-card-icon">📄</div>
+            <div class="file-card-info">
+              <div class="file-card-name" title="${escapeHtml(fi.file_name)}">${escapeHtml(fi.file_name)}</div>
+              <div class="file-card-meta">
+                <span class="file-card-size">${formatBytes(fi.file_size)}</span>
+                <span class="file-card-dot">•</span>
+                <span class="file-card-status status-${status}">${status}</span>
+              </div>
+            </div>
+          </div>
+          ${actionsHtml}
+        </div>
+      `;
+    } else if (m.buzz_type) {
+      const bType = m.buzz_type === "hard" ? "hard" : "soft";
+      contentHtml = `
+        <div class="chat-buzz-bubble ${bType}">
+          <div class="chat-buzz-icon">${bType === "hard" ? "⚡💥" : "🔔"}</div>
+          <div class="chat-buzz-body">
+            <div class="chat-buzz-title">${escapeHtml(m.content)}</div>
+            <div class="chat-buzz-sub">${bType === "hard" ? "Violent screen shake & electric buzzer" : "Gentle nudge & alert chime"}</div>
+          </div>
+        </div>
+      `;
+
+      if (!knownTriggeredBuzzIds.has(m.id)) {
+        knownTriggeredBuzzIds.add(m.id);
+        if (!m.is_mine) {
+          triggerBuzzEffect(bType, false);
+        }
+      }
+    } else {
+      contentHtml = `<div class="chat-msg-bubble">${escapeHtml(m.content)}</div>`;
+    }
+
+    html += `
+      <div class="chat-msg-row ${m.is_mine ? "mine" : ""}">
+        <div class="chat-msg-avatar">${initials}</div>
+        <div class="chat-msg-body">
+          <div class="chat-msg-meta">
+            <span class="sender">${m.is_mine ? "You" : m.sender_name}</span>
+            <span class="host">(${m.sender_host})</span>
+            <span class="time">${timeFormatted}</span>
+          </div>
+          ${contentHtml}
+        </div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+
+  if (forceScroll || isScrolledNearBottom) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+async function handleSendChatMessage() {
+  const input = document.getElementById("input-chat-message");
+  if (!input) return;
+
+  const text = input.value.trim();
+  if (!text) return;
+
+  // Slash commands for Buzz
+  const lower = text.toLowerCase();
+  if (lower === "/hard" || lower === "/buzz") {
+    input.value = "";
+    handleSendBuzz("hard");
+    return;
+  }
+  if (lower === "/soft" || lower === "/nudge") {
+    input.value = "";
+    handleSendBuzz("soft");
+    return;
+  }
+
+  try {
+    input.value = "";
+    const newMsg = await invoke("send_chat_message", {
+      recipientId: activeChatRecipient,
+      content: text,
+    });
+    if (newMsg) {
+      knownMessageIds.add(newMsg.id);
+    }
+    await pollChatMessages(true);
+  } catch (err) {
+    showToast(`Failed to send message: ${err}`, "error");
+  }
+}
+
+function updateChatUnreadBadges() {
+  const tabBadge = document.getElementById("badge-chat-unread");
+  const channelAllBadge = document.getElementById("unread-channel-all");
+
+  if (tabBadge) {
+    if (totalUnreadChatCount > 0) {
+      tabBadge.textContent = totalUnreadChatCount;
+      tabBadge.classList.remove("hidden");
+    } else {
+      tabBadge.classList.add("hidden");
+    }
+  }
+
+  if (channelAllBadge) {
+    const unreadAll = unreadChatCounts["all"] || 0;
+    if (unreadAll > 0) {
+      channelAllBadge.textContent = unreadAll;
+      channelAllBadge.classList.remove("hidden");
+    } else {
+      channelAllBadge.classList.add("hidden");
+    }
+  }
+
+  renderChatPeersList();
+}
+
+function playChatNotificationSound() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.08); // A5
+
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.25);
+  } catch (_) {}
+}
+
+function formatChatTime(isoString) {
+  if (!isoString) return "";
+  try {
+    const d = new Date(isoString);
+    let hours = d.getHours();
+    const minutes = d.getMinutes().toString().padStart(2, "0");
+    const ampm = hours >= 12 ? "PM" : "AM";
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    return `${hours}:${minutes} ${ampm}`;
+  } catch (_) {
+    return "";
+  }
+}
+
+
+
+function setupChatSettingsModal() {
+  const modal = document.getElementById("modal-chat-settings");
+  const btnClose = document.getElementById("btn-close-chat-settings");
+  const btnCancel = document.getElementById("btn-cancel-chat-settings");
+  const btnSave = document.getElementById("btn-save-chat-settings");
+
+  const closeModal = () => modal?.classList.add("hidden");
+
+  btnClose?.addEventListener("click", closeModal);
+  btnCancel?.addEventListener("click", closeModal);
+
+  btnSave?.addEventListener("click", async () => {
+    if (!chatConfigCache) return;
+
+    const inputUser = document.getElementById("input-cfg-chat-username");
+    const inputPort = document.getElementById("input-cfg-chat-port");
+    const chkBroadcast = document.getElementById("chk-cfg-chat-broadcast");
+    const chkSounds = document.getElementById("chk-cfg-chat-sounds");
+    const chkDesktop = document.getElementById("chk-cfg-chat-desktop-notifications");
+
+    const newUsername = inputUser?.value.trim();
+    const newPort = parseInt(inputPort?.value, 10);
+
+    if (!newUsername) {
+      alert("Username cannot be empty.");
+      return;
+    }
+
+    if (isNaN(newPort) || newPort < 1024 || newPort > 65535) {
+      alert("Please enter a valid port between 1024 and 65535.");
+      return;
+    }
+
+    chatConfigCache.username = newUsername;
+    chatConfigCache.port = newPort;
+    chatConfigCache.broadcast_enabled = !!chkBroadcast?.checked;
+    chatConfigCache.sound_notifications = !!chkSounds?.checked;
+    chatConfigCache.desktop_notifications = !!chkDesktop?.checked;
+
+    await invoke("save_chat_config", { config: chatConfigCache });
+    await loadChatConfig();
+    closeModal();
+    showToast("Chat settings updated and presence broadcasted.", "success");
+  });
+
+  const btnTest = document.getElementById("btn-test-notification");
+  btnTest?.addEventListener("click", async () => {
+    try {
+      await invoke("send_desktop_notification", {
+        title: "Process Manager Notification",
+        body: "Windows desktop notifications are active and working smoothly!",
+      });
+      showToast("Sent test notification to Windows!", "info");
+    } catch (err) {
+      showToast(`Failed to trigger notification: ${err}`, "error");
+    }
+  });
+}
+
+function openChatSettingsModal() {
+  if (!chatConfigCache) return;
+
+  const modal = document.getElementById("modal-chat-settings");
+  const inputUser = document.getElementById("input-cfg-chat-username");
+  const inputHost = document.getElementById("input-cfg-chat-hostname");
+  const inputPort = document.getElementById("input-cfg-chat-port");
+  const chkBroadcast = document.getElementById("chk-cfg-chat-broadcast");
+  const chkSounds = document.getElementById("chk-cfg-chat-sounds");
+  const chkDesktop = document.getElementById("chk-cfg-chat-desktop-notifications");
+
+  if (inputUser) inputUser.value = chatConfigCache.username;
+  if (inputHost) inputHost.value = chatConfigCache.hostname;
+  if (inputPort) inputPort.value = chatConfigCache.port;
+  if (chkBroadcast) chkBroadcast.checked = chatConfigCache.broadcast_enabled;
+  if (chkSounds) chkSounds.checked = chatConfigCache.sound_notifications;
+  if (chkDesktop) chkDesktop.checked = chatConfigCache.desktop_notifications !== false;
+
+  modal?.classList.remove("hidden");
+}
+
+window.selectChatRecipient = selectChatRecipient;

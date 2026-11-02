@@ -609,3 +609,43 @@ pub fn check_single_instance(mutex_name: &str, window_title: &str) -> bool {
         true
     }
 }
+
+pub fn show_desktop_notification(title: &str, body: &str) {
+    let title_clean = title.replace('"', "\"").replace('\'', "''");
+    let body_clean = body.replace('"', "\"").replace('\'', "''");
+
+    std::thread::spawn(move || {
+        let script = format!(
+            r#"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$textNodes = $template.GetElementsByTagName("text")
+$textNodes.Item(0).AppendChild($template.CreateTextNode("{}")) | Out-Null
+$textNodes.Item(1).AppendChild($template.CreateTextNode("{}")) | Out-Null
+$toast = [Windows.UI.Notifications.ToastNotification]::new($template)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("ProcessManager").Show($toast)"#,
+            title_clean,
+            body_clean
+        );
+
+        let mut cmd = Command::new("powershell");
+        cmd.args(["-NoProfile", "-Command", &script]);
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
+        let _ = cmd.output();
+    });
+}
+
+pub fn flash_window_attention() {
+    unsafe {
+        let title: Vec<u16> = "Windows Process Manager & Service Supervisor (Rust)\0".encode_utf16().collect();
+        let hwnd = FindWindowW(ptr::null(), title.as_ptr());
+        if !hwnd.is_null() {
+            windows_sys::Win32::UI::WindowsAndMessaging::FlashWindow(hwnd, 1);
+        }
+    }
+}

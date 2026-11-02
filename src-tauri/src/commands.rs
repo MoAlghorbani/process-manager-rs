@@ -1,10 +1,11 @@
+use crate::chat::ChatEngine;
 use crate::clipboard::ClipboardWatcher;
 use crate::credentials::CredentialStore;
 use crate::manager::{save_configured_data_dir, ProcessManager};
 use crate::models::{
-    ClipboardItem, CredentialItem, DataStorageInfo, DownloadItem, FFmpegEngineInfo, JigglerConfig,
-    JigglerStats, ManagerSummary, MediaHistoryItem, MediaJobProgress, MediaProbeResult,
-    MediaTaskConfig, ServiceConfig, TodoItem, VideoMetadata, VolumeDetectResult, YtDlpConfig,
+    ChatConfig, ChatMessage, ClipboardItem, CredentialItem, DataStorageInfo, DownloadItem,
+    FileTransferInfo, JigglerConfig, JigglerStats, ManagerSummary, PeerInfo, PickedFileInfo,
+    ServiceConfig, TodoItem, VideoMetadata, YtDlpConfig,
 };
 use crate::todo::TodoStore;
 use crate::win32::request_admin_elevation;
@@ -22,7 +23,7 @@ pub struct AppState {
     pub clipboard_watcher: Arc<ClipboardWatcher>,
     pub todo_store: Arc<TodoStore>,
     pub ytdl_engine: Arc<YtDlpEngine>,
-    pub ffmpeg_engine: Arc<crate::ffmpeg::FFmpegEngine>,
+    pub chat_engine: Arc<ChatEngine>,
     pub hotkey_mgr: Arc<crate::hotkeys::HotkeyManager>,
 }
 
@@ -440,73 +441,54 @@ pub fn kill_process_by_pid(pid: u32) -> bool {
 }
 
 // ==========================================
-// 6. FFmpeg Media Studio Commands
+// 6. LAN Chat Commands
 // ==========================================
 
 #[tauri::command]
-pub fn get_ffmpeg_info(state: State<'_, AppState>) -> FFmpegEngineInfo {
-    state.ffmpeg_engine.get_engine_info()
+pub fn get_chat_config(state: State<'_, AppState>) -> ChatConfig {
+    state.chat_engine.get_config()
 }
 
 #[tauri::command]
-pub fn probe_media_file(file_path: String, state: State<'_, AppState>) -> Result<MediaProbeResult, String> {
-    state.ffmpeg_engine.probe_file(&file_path)
+pub fn save_chat_config(config: ChatConfig, state: State<'_, AppState>) -> Result<(), String> {
+    state.chat_engine.save_config(config);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn detect_media_volume(file_path: String, state: State<'_, AppState>) -> Result<VolumeDetectResult, String> {
-    state.ffmpeg_engine.detect_volume(&file_path)
+pub fn get_chat_peers(state: State<'_, AppState>) -> Vec<PeerInfo> {
+    state.chat_engine.get_peers()
 }
 
 #[tauri::command]
-pub fn start_media_conversion(
-    config: MediaTaskConfig,
+pub fn get_chat_messages(recipient: Option<String>, state: State<'_, AppState>) -> Vec<ChatMessage> {
+    state.chat_engine.get_messages(recipient.as_deref())
+}
+
+#[tauri::command]
+pub fn send_chat_message(
+    recipient_id: String,
+    content: String,
     state: State<'_, AppState>,
-) -> Result<String, String> {
-    state.ffmpeg_engine.start_conversion(config)
+) -> Result<ChatMessage, String> {
+    state.chat_engine.send_message(&recipient_id, &content)
 }
 
 #[tauri::command]
-pub fn cancel_media_conversion(state: State<'_, AppState>) -> bool {
-    state.ffmpeg_engine.cancel_active_conversion()
+pub fn send_chat_typing(recipient_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.chat_engine.send_typing(&recipient_id);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn get_media_progress(state: State<'_, AppState>) -> MediaJobProgress {
-    state.ffmpeg_engine.get_progress()
+pub fn get_chat_typing_status(recipient: String, state: State<'_, AppState>) -> Vec<String> {
+    state.chat_engine.get_typing_users(&recipient)
 }
 
 #[tauri::command]
-pub fn get_media_history(state: State<'_, AppState>) -> Vec<MediaHistoryItem> {
-    state.ffmpeg_engine.get_history()
-}
-
-#[tauri::command]
-pub fn clear_media_history(state: State<'_, AppState>) -> bool {
-    state.ffmpeg_engine.clear_history();
-    true
-}
-
-#[tauri::command]
-pub fn pick_media_file(filter_type: String, state: State<'_, AppState>) -> Option<String> {
-    state.ffmpeg_engine.pick_media_file(&filter_type)
-}
-
-#[tauri::command]
-pub fn pick_media_directory(state: State<'_, AppState>) -> Option<String> {
-    state.ffmpeg_engine.pick_output_directory()
-}
-
-#[tauri::command]
-pub fn open_media_path(path: String, state: State<'_, AppState>) -> bool {
-    state.ffmpeg_engine.open_file_or_dir(&path);
-    true
-}
-
-#[tauri::command]
-pub fn reveal_media_in_explorer(file_path: String, state: State<'_, AppState>) -> bool {
-    state.ffmpeg_engine.reveal_in_explorer(&file_path);
-    true
+pub fn clear_chat_history(recipient: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    state.chat_engine.clear_history(recipient.as_deref());
+    Ok(())
 }
 
 // ==========================================
@@ -521,7 +503,7 @@ fn inspect_dir_info(dir: &Path) -> DataStorageInfo {
     let jiggler_file = dir.join("jiggler_config.json");
     let ytdl_file = dir.join("ytdl_config.json");
     let downloads_file = dir.join("downloads.json");
-    let media_file = dir.join("media_history.json");
+    let chat_file = dir.join("chat_history.json");
 
     let has_services = services_file.exists();
     let has_todos = todos_file.exists();
@@ -529,7 +511,7 @@ fn inspect_dir_info(dir: &Path) -> DataStorageInfo {
     let has_clipboard = clip_file.exists();
     let has_jiggler = jiggler_file.exists();
     let has_downloader = ytdl_file.exists() || downloads_file.exists();
-    let has_media = media_file.exists();
+    let has_chat = chat_file.exists();
 
     let mut services_count = 0;
     if has_services {
@@ -567,6 +549,15 @@ fn inspect_dir_info(dir: &Path) -> DataStorageInfo {
         }
     }
 
+    let mut messages_count = 0;
+    if has_chat {
+        if let Ok(c) = std::fs::read_to_string(&chat_file) {
+            if let Ok(list) = serde_json::from_str::<Vec<ChatMessage>>(&c) {
+                messages_count = list.len();
+            }
+        }
+    }
+
     DataStorageInfo {
         current_dir: dir.to_string_lossy().to_string(),
         has_services,
@@ -575,11 +566,12 @@ fn inspect_dir_info(dir: &Path) -> DataStorageInfo {
         has_clipboard,
         has_jiggler,
         has_downloader,
-        has_media,
+        has_chat,
         services_count,
         todos_count,
         credentials_count,
         clips_count,
+        messages_count,
     }
 }
 
@@ -643,7 +635,8 @@ pub fn set_storage_dir(
             "jiggler_config.json",
             "ytdl_config.json",
             "downloads.json",
-            "media_history.json",
+            "chat_history.json",
+            "chat_config.json",
         ];
         for f in &files_to_copy {
             let src = current_dir.join(f);
@@ -663,8 +656,122 @@ pub fn set_storage_dir(
     state.clipboard_watcher.reload_from_dir(target);
     state.jiggler.reload_from_dir(target);
     state.ytdl_engine.reload_from_dir(target);
-    state.ffmpeg_engine.reload_from_dir(target);
+    state.chat_engine.reload_from_dir(target);
 
     Ok(inspect_dir_info(target))
 }
 
+#[tauri::command]
+pub fn pick_file_to_send() -> Option<PickedFileInfo> {
+    let script = r#"Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.OpenFileDialog; $f.Title = 'Select File to Send over LAN'; $f.Filter = 'All Files (*.*)|*.*'; if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){ Write-Output $f.FileName }"#;
+
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-Command", script]);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    if let Ok(out) = cmd.output() {
+        let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !raw.is_empty() {
+            let p = Path::new(&raw);
+            if p.is_file() {
+                if let Ok(meta) = std::fs::metadata(p) {
+                    let name = p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "file.bin".to_string());
+                    return Some(PickedFileInfo {
+                        path: raw,
+                        name,
+                        size: meta.len(),
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+#[tauri::command]
+pub fn pick_save_file_path(default_name: String) -> Option<String> {
+    let safe_name = default_name.replace('\'', "''");
+    let script = format!(
+        "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.SaveFileDialog; $f.Title = 'Save Received File'; $f.FileName = '{safe_name}'; $f.Filter = 'All Files (*.*)|*.*'; if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){{ Write-Output $f.FileName }}"
+    );
+
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-Command", &script]);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    if let Ok(out) = cmd.output() {
+        let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !raw.is_empty() {
+            return Some(raw);
+        }
+    }
+    None
+}
+
+#[tauri::command]
+pub fn send_file_offer(
+    recipient_id: String,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<FileTransferInfo, String> {
+    state.chat_engine.send_file_offer(&recipient_id, &file_path)
+}
+
+#[tauri::command]
+pub fn accept_file_transfer(
+    transfer_id: String,
+    save_path: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.chat_engine.accept_file_transfer(&transfer_id, save_path)
+}
+
+#[tauri::command]
+pub fn decline_file_transfer(
+    transfer_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.chat_engine.decline_file_transfer(&transfer_id)
+}
+
+#[tauri::command]
+pub fn cancel_file_transfer(
+    transfer_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.chat_engine.cancel_file_transfer(&transfer_id)
+}
+
+#[tauri::command]
+pub fn get_file_transfers(
+    state: State<'_, AppState>,
+) -> Vec<FileTransferInfo> {
+    state.chat_engine.get_file_transfers()
+}
+
+#[tauri::command]
+pub fn send_desktop_notification(title: String, body: String) {
+    crate::win32::show_desktop_notification(&title, &body);
+}
+
+#[tauri::command]
+pub fn send_chat_buzz(
+    recipient_id: String,
+    buzz_type: String,
+    state: State<'_, AppState>,
+) -> Result<ChatMessage, String> {
+    state.chat_engine.send_buzz(&recipient_id, &buzz_type)
+}

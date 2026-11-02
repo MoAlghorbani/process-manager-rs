@@ -28,11 +28,6 @@ fn main() {
         return;
     }
 
-    // Background extraction of embedded tools (ffmpeg, ffprobe, yt-dlp) for Desktop GUI
-    std::thread::spawn(|| {
-        process_manager_rs_lib::embedded::ensure_embedded_tools();
-    });
-
     // Hide console window when launching Desktop GUI
     unsafe {
         let hwnd = GetConsoleWindow();

@@ -294,126 +294,121 @@ pub struct DownloadItem {
 }
 
 // ==========================================
-// 6. FFmpeg Media Studio Models
+// 6. LAN Chat Models
 // ==========================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FFmpegEngineInfo {
-    pub available: bool,
-    pub path: String,
-    pub ffprobe_path: String,
-    pub version: String,
-    pub is_embedded: bool,
-    pub has_nvenc: bool,
-    pub has_qsv: bool,
-    pub has_amf: bool,
+fn default_transfer_port() -> u16 {
+    38384
+}
+
+fn default_desktop_notifications() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MediaStreamInfo {
-    pub index: usize,
-    pub codec_type: String, // "video", "audio", "subtitle"
-    pub codec_name: String,
-    #[serde(default)]
-    pub resolution: Option<String>,
-    #[serde(default)]
-    pub fps: Option<f64>,
-    #[serde(default)]
-    pub sample_rate: Option<String>,
-    #[serde(default)]
-    pub channels: Option<usize>,
-    #[serde(default)]
-    pub bitrate: Option<String>,
+pub struct ChatConfig {
+    pub user_id: String,
+    pub username: String,
+    pub hostname: String,
+    pub status: String, // "online", "away", "busy"
+    pub port: u16,
+    #[serde(default = "default_transfer_port")]
+    pub file_transfer_port: u16,
+    pub broadcast_enabled: bool,
+    pub sound_notifications: bool,
+    #[serde(default = "default_desktop_notifications")]
+    pub desktop_notifications: bool,
+}
+
+impl Default for ChatConfig {
+    fn default() -> Self {
+        let username = std::env::var("USERNAME")
+            .or_else(|_| std::env::var("USER"))
+            .unwrap_or_else(|_| "User".to_string());
+
+        let hostname = std::env::var("COMPUTERNAME")
+            .unwrap_or_else(|_| "Windows-PC".to_string());
+
+        let user_id = format!(
+            "{}-{}",
+            username.to_lowercase().replace(' ', "_"),
+            rand::random::<u16>()
+        );
+
+        Self {
+            user_id,
+            username,
+            hostname,
+            status: "online".to_string(),
+            port: 38383,
+            file_transfer_port: 38384,
+            broadcast_enabled: true,
+            sound_notifications: true,
+            desktop_notifications: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MediaProbeResult {
-    pub file_path: String,
-    pub file_name: String,
-    pub file_size_mb: f64,
-    pub format: String,
-    pub duration_sec: f64,
-    pub duration_formatted: String,
-    #[serde(default)]
-    pub bitrate_kbps: Option<u64>,
-    pub streams: Vec<MediaStreamInfo>,
-    pub has_video: bool,
-    pub has_audio: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VolumeDetectResult {
-    pub max_volume_db: f64,
-    pub mean_volume_db: f64,
-    pub recommended_boost_db: f64,
-    pub recommended_boost_multiplier: f64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MediaTaskConfig {
-    pub task_type: String, // "video_to_mp3", "convert_video", "convert_audio", "convert_image", "boost_volume"
-    pub input_path: String,
-    #[serde(default)]
-    pub output_dir: Option<String>,
-    #[serde(default)]
-    pub custom_filename: Option<String>,
-    #[serde(default = "default_mp3")]
-    pub target_format: String,
-    #[serde(default)]
-    pub audio_bitrate: Option<String>, // "320k", "256k", "192k", "128k"
-    #[serde(default)]
-    pub video_codec: Option<String>,   // "libx264", "libx265", "libvpx-vp9", "copy"
-    #[serde(default)]
-    pub resolution: Option<String>,    // "original", "1920x1080", "1280x720", "854x480"
-    #[serde(default)]
-    pub preset: Option<String>,        // "ultrafast", "fast", "medium", "slow"
-    #[serde(default)]
-    pub volume_multiplier: Option<f64>, // e.g. 1.5, 2.0, 3.0
-    #[serde(default)]
-    pub volume_db: Option<f64>,        // e.g. 6.0
-    #[serde(default)]
-    pub use_loudnorm: bool,
-    #[serde(default)]
-    pub image_quality: Option<u32>,    // 1-100
-    #[serde(default)]
-    pub image_scale: Option<String>,   // "original", "50%", "1920x1080"
-}
-
-fn default_mp3() -> String {
-    "mp3".to_string()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MediaJobProgress {
-    pub job_id: String,
-    pub status: String, // "idle", "running", "completed", "failed", "cancelled"
-    pub task_type: String,
-    pub input_path: String,
-    pub output_path: String,
-    pub progress_percent: f64,
-    pub current_time: String,
-    pub total_duration: String,
-    pub speed: String,
-    #[serde(default)]
-    pub fps: Option<f64>,
-    #[serde(default)]
-    pub error_msg: Option<String>,
-    #[serde(default)]
-    pub output_size_mb: Option<f64>,
-    #[serde(default)]
-    pub elapsed_sec: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MediaHistoryItem {
+pub struct PeerInfo {
     pub id: String,
-    pub task_type: String,
-    pub input_file: String,
-    pub output_file: String,
-    pub output_size_mb: f64,
-    pub duration_formatted: String,
-    pub completed_at: DateTime<Utc>,
-    pub format: String,
+    pub username: String,
+    pub hostname: String,
+    pub ip: String,
+    pub status: String,
+    pub last_seen: DateTime<Utc>,
+    pub is_online: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileTransferInfo {
+    pub transfer_id: String,
+    pub file_name: String,
+    pub file_size: u64,
+    #[serde(default)]
+    pub file_path: Option<String>,
+    #[serde(default)]
+    pub save_path: Option<String>,
+    pub sender_id: String,
+    pub sender_name: String,
+    pub sender_host: String,
+    pub recipient_id: String,
+    pub sender_ip: String,
+    pub transfer_port: u16,
+    pub direction: String, // "outgoing", "incoming"
+    pub status: String,    // "offered", "transferring", "completed", "declined", "cancelled", "failed"
+    pub bytes_transferred: u64,
+    pub progress: f64,
+    pub speed_bps: u64,
+    pub eta_sec: u64,
+    #[serde(default)]
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PickedFileInfo {
+    pub path: String,
+    pub name: String,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessage {
+    pub id: String,
+    pub sender_id: String,
+    pub sender_name: String,
+    pub sender_host: String,
+    pub recipient_id: String, // "all" for general room, or specific peer user_id
+    pub content: String,
+    pub timestamp: DateTime<Utc>,
+    pub is_mine: bool,
+    #[serde(default)]
+    pub file_info: Option<FileTransferInfo>,
+    #[serde(default)]
+    pub buzz_type: Option<String>, // "hard" or "soft"
 }
 
 // ==========================================
@@ -429,9 +424,10 @@ pub struct DataStorageInfo {
     pub has_clipboard: bool,
     pub has_jiggler: bool,
     pub has_downloader: bool,
-    pub has_media: bool,
+    pub has_chat: bool,
     pub services_count: usize,
     pub todos_count: usize,
     pub credentials_count: usize,
     pub clips_count: usize,
+    pub messages_count: usize,
 }

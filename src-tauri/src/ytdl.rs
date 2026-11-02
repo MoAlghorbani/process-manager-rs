@@ -130,13 +130,6 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
 
 impl YtDlpEngine {
     pub fn locate_ytdlp(&self) -> Result<PathBuf, String> {
-        // 0. Check embedded tools in %LOCALAPPDATA%\ProcessManager\bin
-        crate::embedded::ensure_embedded_tools();
-        let embedded_bin = crate::embedded::get_embedded_bin_dir().join("yt-dlp.exe");
-        if embedded_bin.exists() {
-            return Ok(embedded_bin);
-        }
-
         // 1. Check next to current exe
         if let Ok(exe) = std::env::current_exe() {
             if let Some(parent) = exe.parent() {
@@ -184,13 +177,6 @@ impl YtDlpEngine {
     }
 
     pub fn locate_ffmpeg(&self) -> Option<PathBuf> {
-        // 0. Check embedded tools in %LOCALAPPDATA%\ProcessManager\bin
-        crate::embedded::ensure_embedded_tools();
-        let embedded_bin = crate::embedded::get_embedded_bin_dir().join("ffmpeg.exe");
-        if embedded_bin.exists() {
-            return Some(embedded_bin);
-        }
-
         // 1. Check system PATH
         if let Some(p) = find_in_path("ffmpeg") {
             return Some(p);
