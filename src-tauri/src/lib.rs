@@ -74,6 +74,7 @@ pub fn run() {
             commands::dissolve_group,
             commands::get_logs,
             commands::clear_logs,
+            commands::open_live_cmd,
             commands::detect_venv,
             commands::request_elevation,
             // Jiggler

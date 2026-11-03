@@ -140,6 +140,49 @@ pub fn clear_logs(name: String, state: State<'_, AppState>) -> bool {
 }
 
 #[tauri::command]
+pub fn open_live_cmd(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    let log_file = state.pm.logs_dir.read().unwrap().join(format!("{}.log", name));
+    let log_path_str = log_file.to_string_lossy().to_string();
+
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        let safe_log_path = log_path_str.replace("'", "''");
+        let ps_cmd = format!(
+            "$host.UI.RawUI.WindowTitle = 'Live Console: {name}'; \
+             Write-Host '==================================================' -ForegroundColor DarkCyan; \
+             Write-Host '  LIVE STREAMING PROCESS LOG: {name}' -ForegroundColor Green; \
+             Write-Host '  Log File: {path}' -ForegroundColor Gray; \
+             Write-Host '  Press Ctrl+C to exit console viewer' -ForegroundColor DarkYellow; \
+             Write-Host '==================================================' -ForegroundColor DarkCyan; \
+             if (Test-Path '{path}') {{ \
+                 Get-Content -Path '{path}' -Tail 200 -Wait \
+             }} else {{ \
+                 Write-Host 'Log file does not exist yet. Waiting...' -ForegroundColor Yellow; \
+                 while (-not (Test-Path '{path}')) {{ Start-Sleep -Milliseconds 500 }}; \
+                 Get-Content -Path '{path}' -Tail 200 -Wait \
+             }}",
+            name = name,
+            path = safe_log_path
+        );
+
+        let res = Command::new("cmd.exe")
+            .args(["/C", "start", &format!("Logs - {}", name), "powershell.exe", "-NoExit", "-Command", &ps_cmd])
+            .spawn();
+
+        match res {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Failed to spawn console window: {}", e)),
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(())
+    }
+}
+
+#[tauri::command]
 pub fn detect_venv(cwd: String) -> Option<String> {
     ProcessManager::detect_venv_in_dir(&cwd)
 }

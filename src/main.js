@@ -15,6 +15,7 @@ let currentTab = "tab-services";
 let selectedGroup = "ALL";
 let selectedService = "";
 let lastLogText = "";
+let lastFilterQuery = "";
 let isLogUserPaused = false;
 let isResizingSplit = false;
 let startY = 0;
@@ -188,6 +189,20 @@ function setupServices() {
       await invoke("clear_logs", { name: selectedService });
       pollLogs();
     }
+  });
+
+  document.getElementById("btn-open-live-cmd")?.addEventListener("click", async () => {
+    if (selectedService) {
+      try {
+        await invoke("open_live_cmd", { name: selectedService });
+      } catch (err) {
+        console.error("Failed to launch Live CMD:", err);
+      }
+    }
+  });
+
+  document.getElementById("input-log-filter")?.addEventListener("input", () => {
+    renderCurrentLogs(true);
   });
 
   document.getElementById("btn-log-bottom").addEventListener("click", () => {
@@ -972,6 +987,7 @@ window.restartService = async (name) => {
 
 window.inspectLogs = (name) => {
   selectedService = name;
+  lastLogText = "";
   document.getElementById("logs-title").textContent = `📜 Logs for '${name}'`;
   isLogUserPaused = false;
   document.getElementById("chk-autoscroll").checked = true;
@@ -1004,6 +1020,157 @@ window.deleteService = async (name) => {
   }
 };
 
+function escapeLogHtml(str) {
+  return String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function ansiToHtml(str) {
+  const ansiRegex = /\x1b\[([0-9;]*)m/g;
+  if (!ansiRegex.test(str)) {
+    return null;
+  }
+  ansiRegex.lastIndex = 0;
+
+  let openSpans = 0;
+  let result = "";
+  let lastIndex = 0;
+  let match;
+
+  while ((match = ansiRegex.exec(str)) !== null) {
+    const rawText = str.slice(lastIndex, match.index);
+    if (rawText) {
+      result += escapeLogHtml(rawText);
+    }
+    lastIndex = match.index + match[0].length;
+
+    const codes = match[1] ? match[1].split(";").map((n) => parseInt(n, 10)) : [0];
+    for (let i = 0; i < codes.length; i++) {
+      const code = codes[i];
+      if (code === 0) {
+        while (openSpans > 0) {
+          result += "</span>";
+          openSpans--;
+        }
+      } else if (code === 1) {
+        result += '<span class="ansi-bold">';
+        openSpans++;
+      } else if (code === 2) {
+        result += '<span class="ansi-dim">';
+        openSpans++;
+      } else if (code === 4) {
+        result += '<span class="ansi-underline">';
+        openSpans++;
+      } else if (code >= 30 && code <= 37) {
+        const colors = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+        result += `<span class="ansi-${colors[code - 30]}">`;
+        openSpans++;
+      } else if (code >= 90 && code <= 97) {
+        const colors = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+        result += `<span class="ansi-bright-${colors[code - 90]}">`;
+        openSpans++;
+      } else if (code === 38 && codes[i + 1] === 5 && codes[i + 2] !== undefined) {
+        const col = codes[i + 2];
+        result += `<span style="color: var(--ansi-256-${col}, #38bdf8)">`;
+        openSpans++;
+        i += 2;
+      } else if (code === 38 && codes[i + 1] === 2 && codes[i + 4] !== undefined) {
+        const r = codes[i + 2], g = codes[i + 3], b = codes[i + 4];
+        result += `<span style="color: rgb(${r},${g},${b})">`;
+        openSpans++;
+        i += 4;
+      }
+    }
+  }
+
+  const remaining = str.slice(lastIndex);
+  if (remaining) {
+    result += escapeLogHtml(remaining);
+  }
+  while (openSpans > 0) {
+    result += "</span>";
+    openSpans--;
+  }
+
+  return result;
+}
+
+function highlightPlainLogLine(line) {
+  const isErrorLine = /^\s*(?:ERROR|FATAL|CRITICAL)\b/i.test(line);
+  const isWarnLine = /^\s*WARN(?:ING)?\b/i.test(line);
+  const isInfoLine = /^\s*INFO\b/i.test(line);
+
+  let escaped = escapeLogHtml(line);
+
+  // 1. Durations like [0.00ms] or (15.2ms)
+  escaped = escaped.replace(/(\[\s*\d+(?:\.\d+)?(?:ms|s|µs|ns)\s*\])/g, '<span class="log-time">$1</span>');
+
+  // 2. SQL Keywords & backticks & quotes
+  if (/\b(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN|CREATE|ALTER|DROP|TABLE)\b/i.test(line)) {
+    escaped = escaped.replace(/\b(SELECT|FROM|WHERE|ORDER\s+BY|GROUP\s+BY|DESC|ASC|LIMIT|OFFSET|AND|OR|LEFT\s+JOIN|RIGHT\s+JOIN|INNER\s+JOIN|JOIN|INSERT\s+INTO|VALUES|UPDATE|SET|DELETE\s+FROM|NOT\s+IN|IN|LIKE|ILIKE|BETWEEN|IS\s+NULL|IS\s+NOT\s+NULL|COUNT|MAX|MIN|AVG|SUM|HAVING|DISTINCT|ON|AS)\b/gi, '<span class="log-sql-kw">$1</span>');
+    escaped = escaped.replace(/(`[^`]+`)/g, '<span class="log-sql-ident">$1</span>');
+    escaped = escaped.replace(/('[^']*')/g, '<span class="log-sql-str">$1</span>');
+  }
+
+  // 3. Tree characters └ ├ │ ─
+  escaped = escaped.replace(/([└├│─]+)/g, '<span class="log-tree">$1</span>');
+
+  // 4. HTTP Methods and URLs
+  escaped = escaped.replace(/\b(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+(\/[a-zA-Z0-9_\-\.\/\?=&%#:@\+]*)/g, function(_, m, p) {
+    return `<span class="log-http-${m.toLowerCase()}">${m}</span> <span class="log-route">${p}</span>`;
+  });
+
+  // 5. HTTP status codes
+  escaped = escaped.replace(/\b(HTTP\s+([1-5]\d\d))\b/g, function(_, full, code) {
+    const cls = code >= 400 ? 'log-http-status-err' : (code >= 300 ? 'log-http-status-warn' : 'log-http-status-ok');
+    return `<span class="${cls}">${full}</span>`;
+  });
+
+  // 6. JSON keys: "key":
+  escaped = escaped.replace(/("[\w\-]+")\s*:/g, '<span class="log-json-key">$1</span>:');
+
+  // 7. Log levels
+  escaped = escaped.replace(/\b(ERROR|FATAL|CRITICAL)\b/g, '<span class="log-level-error">$1</span>');
+  escaped = escaped.replace(/\b(WARN|WARNING)\b/g, '<span class="log-level-warn">$1</span>');
+  escaped = escaped.replace(/\b(INFO)\b/g, '<span class="log-level-info">$1</span>');
+  escaped = escaped.replace(/\b(DEBUG)\b/g, '<span class="log-level-debug">$1</span>');
+  escaped = escaped.replace(/\b(TRACE)\b/g, '<span class="log-level-trace">$1</span>');
+  escaped = escaped.replace(/\b(SUCCESS)\b/g, '<span class="log-level-success">$1</span>');
+
+  const lineClass = isErrorLine ? 'log-line log-line-error' : (isWarnLine ? 'log-line log-line-warn' : (isInfoLine ? 'log-line log-line-info' : 'log-line'));
+  return `<span class="${lineClass}">${escaped}</span>`;
+}
+
+function formatTerminalLogs(rawText, filterQuery = "") {
+  if (!rawText) return "";
+  let lines = rawText.split("\n");
+  if (filterQuery && filterQuery.trim()) {
+    const q = filterQuery.trim().toLowerCase();
+    lines = lines.filter((l) => l.toLowerCase().includes(q));
+  }
+  return lines.map((line) => {
+    const ansiFormatted = ansiToHtml(line);
+    if (ansiFormatted !== null) {
+      return `<span class="log-line">${ansiFormatted}</span>`;
+    }
+    return highlightPlainLogLine(line);
+  }).join("\n");
+}
+
+function renderCurrentLogs(forceRender = false, forceSnap = false) {
+  const logPre = document.getElementById("logs-pre");
+  if (!logPre) return;
+  const filterInput = document.getElementById("input-log-filter");
+  const filterQuery = filterInput ? filterInput.value : "";
+
+  if (forceRender || lastFilterQuery !== filterQuery) {
+    lastFilterQuery = filterQuery;
+    logPre.innerHTML = formatTerminalLogs(lastLogText, filterQuery);
+    if (!isLogUserPaused || forceSnap) {
+      logPre.scrollTop = logPre.scrollHeight;
+    }
+  }
+}
+
 async function pollLogs(forceSnap = false) {
   if (!selectedService || currentTab !== "tab-services") return;
   const lines = parseInt(document.getElementById("select-log-lines").value, 10) || 250;
@@ -1016,22 +1183,29 @@ async function pollLogs(forceSnap = false) {
   }
 
   const logs = await invoke("get_logs", { name: selectedService, lines });
-  if (!logs) return;
+  if (logs === null || logs === undefined) return;
 
   const logPre = document.getElementById("logs-pre");
-  if (logs !== lastLogText) {
+  if (!logPre) return;
+  const filterInput = document.getElementById("input-log-filter");
+  const filterQuery = filterInput ? filterInput.value : "";
+
+  if (logs !== lastLogText || filterQuery !== lastFilterQuery) {
     lastLogText = logs;
-    logPre.textContent = logs;
+    lastFilterQuery = filterQuery;
+    logPre.innerHTML = formatTerminalLogs(logs, filterQuery);
 
     // Update size badge
     const byteSize = new Blob([logs]).size;
     const sizeBadge = document.getElementById("logs-size-badge");
-    if (byteSize > 1024 * 1024) {
-      sizeBadge.textContent = `(${(byteSize / (1024 * 1024)).toFixed(1)} MB)`;
-    } else if (byteSize > 1024) {
-      sizeBadge.textContent = `(${(byteSize / 1024).toFixed(1)} KB)`;
-    } else {
-      sizeBadge.textContent = `(${byteSize} B)`;
+    if (sizeBadge) {
+      if (byteSize > 1024 * 1024) {
+        sizeBadge.textContent = `(${(byteSize / (1024 * 1024)).toFixed(1)} MB)`;
+      } else if (byteSize > 1024) {
+        sizeBadge.textContent = `(${(byteSize / 1024).toFixed(1)} KB)`;
+      } else {
+        sizeBadge.textContent = `(${byteSize} B)`;
+      }
     }
 
     if (!isLogUserPaused || forceSnap) {

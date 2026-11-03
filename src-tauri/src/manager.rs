@@ -5,7 +5,7 @@ use crate::win32::{
 use chrono::Utc;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, RwLock};
@@ -299,6 +299,13 @@ impl ProcessManager {
                 cmd.env(k, val);
             }
         }
+
+        // Force ANSI colors & unbuffered output across node, python, rust, go, clis
+        cmd.env("FORCE_COLOR", "1");
+        cmd.env("CLICOLOR_FORCE", "1");
+        cmd.env("PYTHONUNBUFFERED", "1");
+        cmd.env("COLORTERM", "truecolor");
+        cmd.env("TERM", "xterm-256color");
 
         // Standard handles to log file
         if let Some(f) = &log_writer {
@@ -748,26 +755,70 @@ impl ProcessManager {
             return "(No log file recorded yet)".to_string();
         }
 
-        let file = match File::open(&log_file) {
+        let mut file = match File::open(&log_file) {
             Ok(f) => f,
             Err(_) => return "(Failed to open log file)".to_string(),
         };
 
-        let reader = BufReader::new(file);
-        let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+        let file_len = match file.metadata() {
+            Ok(m) => m.len(),
+            Err(_) => return "(Failed to read log metadata)".to_string(),
+        };
 
-        if lines.is_empty() {
+        if file_len == 0 {
             return "(Log file is empty)".to_string();
         }
 
         let take_count = if lines_count == 0 { 250 } else { lines_count };
-        let start = if lines.len() > take_count {
-            lines.len() - take_count
+
+        // For small files (<= 64KB), read normally
+        if file_len <= 65536 {
+            let reader = BufReader::new(file);
+            let lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+            if lines.is_empty() {
+                return "(Log file is empty)".to_string();
+            }
+            let start = if lines.len() > take_count {
+                lines.len() - take_count
+            } else {
+                0
+            };
+            return lines[start..].join("\n");
+        }
+
+        // For large files (e.g. 100MB+), seek backwards to avoid massive memory allocation and UI freezing
+        let seek_size = ((take_count as u64) * 600 + 32768).min(file_len);
+
+        if let Err(_) = file.seek(SeekFrom::End(-(seek_size as i64))) {
+            let _ = file.seek(SeekFrom::Start(0));
+        }
+
+        let mut buffer = Vec::with_capacity(seek_size as usize);
+        if file.read_to_end(&mut buffer).is_err() {
+            return "(Error reading log content)".to_string();
+        }
+
+        let text = String::from_utf8_lossy(&buffer);
+        let all_lines: Vec<&str> = text.lines().collect();
+
+        if all_lines.is_empty() {
+            return "(Log file is empty)".to_string();
+        }
+
+        // When seeking from the middle of the file, drop the incomplete first line
+        let valid_lines = if seek_size < file_len && all_lines.len() > 1 {
+            &all_lines[1..]
+        } else {
+            &all_lines[..]
+        };
+
+        let start = if valid_lines.len() > take_count {
+            valid_lines.len() - take_count
         } else {
             0
         };
 
-        lines[start..].join("\n")
+        valid_lines[start..].join("\n")
     }
 
     pub fn clear_logs(&self, name: &str) -> bool {

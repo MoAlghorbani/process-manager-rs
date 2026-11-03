@@ -115,6 +115,7 @@
               <span class="badge badge-emerald" id="logs-status-badge">● LIVE</span>
             </div>
             <div class="logs-controls">
+              <input type="text" id="input-log-filter" class="input-sm" placeholder="🔍 Filter..." style="width: 100px; height: 26px; font-size: 11px; background: #000; border: 1px solid var(--border-subtle); color: #fff; border-radius: 4px; padding: 2px 8px;">
               <label class="checkbox-label">
                 <input type="checkbox" id="chk-autoscroll" checked> Auto-Scroll
               </label>
@@ -127,6 +128,7 @@
               </select>
               <button class="btn btn-sm btn-secondary" id="btn-copy-logs">Copy</button>
               <button class="btn btn-sm btn-rose" id="btn-clear-logs">Clear</button>
+              <button class="btn btn-sm btn-primary" id="btn-open-live-cmd" title="Open live external PowerShell / CMD terminal window">💻 Live CMD</button>
               <div class="btn-group-sm">
                 <button class="btn btn-sm btn-secondary" id="btn-logs-collapse" title="Collapse Logs">⬇</button>
                 <button class="btn btn-sm btn-secondary" id="btn-logs-half" title="Half Screen">🗖</button>
