@@ -251,7 +251,49 @@ function setupServices() {
     modalService.classList.remove("hidden");
   });
 
-  document.getElementById("btn-close-service-modal").addEventListener("click", () => modalService.classList.add("hidden"));
+  // Interactive Shortcut Recorder in Service Modal
+  const scInput = document.getElementById("input-service-shortcut");
+  if (scInput) {
+    let chordKeys = [];
+
+    scInput.addEventListener("keydown", (e) => {
+      if (e.key === "Tab" || e.key === "Escape") return;
+
+      if (e.key === "Backspace" || e.key === "Delete") {
+        scInput.value = "";
+        chordKeys = [];
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const k = e.key.toUpperCase();
+      if (["CONTROL", "ALT", "SHIFT", "META"].includes(k)) return;
+
+      const mods = [];
+      if (e.ctrlKey) mods.push("Ctrl");
+      if (e.altKey) mods.push("Alt");
+      if (e.shiftKey) mods.push("Shift");
+      if (e.metaKey) mods.push("Win");
+
+      if (
+        chordKeys.length > 0 &&
+        (e.altKey || e.ctrlKey || Date.now() - chordKeys[0].time < 1200)
+      ) {
+        chordKeys.push({ key: k, time: Date.now() });
+      } else {
+        chordKeys = [{ key: k, time: Date.now() }];
+      }
+
+      const seq = chordKeys.map((item) => item.key).join("+");
+      scInput.value = mods.length > 0 ? `${mods.join("+")}+${seq}` : seq;
+    });
+
+    scInput.addEventListener("focus", () => {
+      chordKeys = [];
+    });
+  }
   document.getElementById("btn-cancel-service").addEventListener("click", () => modalService.classList.add("hidden"));
 
   document.getElementById("btn-detect-venv").addEventListener("click", async () => {
@@ -886,80 +928,8 @@ function showToast(message, type = "info") {
   }, 3200);
 }
 
-// ==========================================
-// In-App Keyboard Shortcuts Listener
-// ==========================================
-
-window.addEventListener("keydown", async (e) => {
-  const activeEl = document.activeElement;
-  if (
-    activeEl &&
-    (activeEl.tagName === "INPUT" ||
-      activeEl.tagName === "TEXTAREA" ||
-      activeEl.isContentEditable)
-  ) {
-    return;
-  }
-
-  // Construct shortcut key string, e.g. "Ctrl+Alt+1"
-  const parts = [];
-  if (e.ctrlKey) parts.push("Ctrl");
-  if (e.altKey) parts.push("Alt");
-  if (e.shiftKey) parts.push("Shift");
-  if (e.metaKey) parts.push("Win");
-
-  const key = e.key.toUpperCase();
-  if (["CONTROL", "ALT", "SHIFT", "META"].includes(key)) {
-    return;
-  }
-  parts.push(key);
-  const shortcutStr = parts.join("+");
-
-  // 1. Check Mouse Jiggler shortcut (e.g. "Ctrl+Alt+J")
-  try {
-    const jigglerConfig = await invoke("get_jiggler_config");
-    if (
-      jigglerConfig &&
-      jigglerConfig.shortcut &&
-      jigglerConfig.shortcut.trim().toUpperCase() === shortcutStr.toUpperCase()
-    ) {
-      e.preventDefault();
-      const stats = await invoke("get_jiggler_stats");
-      if (stats.running) {
-        await invoke("stop_jiggler");
-        showToast("🐭 Mouse Jiggler Stopped [Ctrl+Alt+J]", "info");
-      } else {
-        await invoke("start_jiggler");
-        showToast("🐭 Mouse Jiggler Started [Ctrl+Alt+J]", "success");
-      }
-      return;
-    }
-  } catch (_) {}
-
-  // 2. Check Service shortcuts (e.g. "Ctrl+Alt+1" ... "Ctrl+Alt+6")
-  try {
-    const summary = await invoke("get_manager_summary");
-    if (summary && summary.services) {
-      const matched = summary.services.find(
-        (s) =>
-          s.shortcut &&
-          s.shortcut.trim().toUpperCase() === shortcutStr.toUpperCase()
-      );
-      if (matched) {
-        e.preventDefault();
-        const isRunning = matched.status === "running";
-        if (isRunning) {
-          await invoke("stop_service", { name: matched.name });
-          showToast(`⏹ Stopped '${matched.name}' [${shortcutStr}]`, "info");
-        } else {
-          await invoke("start_service", { name: matched.name });
-          showToast(`▶ Started '${matched.name}' [${shortcutStr}]`, "success");
-        }
-        pollServices();
-      }
-    }
-  } catch (_) {}
-});
+// Note: All global shortcuts & chords (e.g. Alt+C+2, Ctrl+Alt+1, etc.) are handled
+// seamlessly at the OS level by the Rust Low-Level Keyboard Engine (hotkeys.rs).
 
 // Global Service Actions
 window.openServiceUrl = async (port) => {

@@ -3,60 +3,90 @@ use crate::manager::ProcessManager;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use windows_sys::Win32::Foundation::HWND;
+use std::time::{Duration, Instant};
+use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetMessageW, PeekMessageW, PostThreadMessageW, MSG, WM_HOTKEY, WM_USER,
+    CallNextHookEx, GetMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
+    KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN, WM_USER,
 };
 
 pub const WM_RELOAD_HOTKEYS: u32 = WM_USER + 101;
 pub const WM_STOP_HOTKEYS: u32 = WM_USER + 102;
 
-const MOD_ALT: u32 = 0x0001;
-const MOD_CONTROL: u32 = 0x0002;
-const MOD_SHIFT: u32 = 0x0004;
-const MOD_WIN: u32 = 0x0008;
-const MOD_NOREPEAT: u32 = 0x4000;
+#[derive(Clone, Debug)]
+pub struct ParsedShortcut {
+    pub target: String,
+    pub original: String,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub win: bool,
+    pub keys: Vec<u32>,
+}
 
-/// Translates user shortcut string (e.g. "Ctrl+Alt+1", "Ctrl+Alt+J", "F5")
-/// to Win32 modifiers and Virtual Key code.
-pub fn parse_shortcut(shortcut_str: &str) -> Option<(u32, u32)> {
+#[derive(Clone, Debug)]
+struct KeyRecord {
+    vk: u32,
+    time: Instant,
+    alt: bool,
+    ctrl: bool,
+    shift: bool,
+    win: bool,
+}
+
+struct HotkeyState {
+    pm: Arc<ProcessManager>,
+    jiggler: Arc<JigglerEngine>,
+    shortcuts: Vec<ParsedShortcut>,
+    recent_keys: Vec<KeyRecord>,
+    last_trigger: HashMap<String, Instant>,
+}
+
+static HOTKEY_STATE: Mutex<Option<HotkeyState>> = Mutex::new(None);
+
+pub fn parse_shortcut(shortcut_str: &str, target: &str) -> Option<ParsedShortcut> {
     let raw = shortcut_str.trim();
     if raw.is_empty() {
         return None;
     }
 
     let parts: Vec<&str> = raw.split('+').collect();
-    let mut modifiers: u32 = MOD_NOREPEAT;
-    let mut vk: u32 = 0;
+    let mut ctrl = false;
+    let mut alt = false;
+    let mut shift = false;
+    let mut win = false;
+    let mut keys = Vec::new();
 
     for part in parts {
         let p = part.trim().to_lowercase();
         match p.as_str() {
-            "ctrl" | "control" => modifiers |= MOD_CONTROL,
-            "alt" => modifiers |= MOD_ALT,
-            "shift" => modifiers |= MOD_SHIFT,
-            "win" | "super" | "cmd" => modifiers |= MOD_WIN,
+            "ctrl" | "control" => ctrl = true,
+            "alt" => alt = true,
+            "shift" => shift = true,
+            "win" | "super" | "cmd" => win = true,
             other => {
                 let u = other.to_uppercase();
                 if u.len() == 1 {
                     let b = u.as_bytes()[0];
                     if (b'0'..=b'9').contains(&b) || (b'A'..=b'Z').contains(&b) {
-                        vk = b as u32;
+                        keys.push(b as u32);
                     }
                 } else if u.starts_with('F') && u.len() >= 2 {
                     if let Ok(num) = u[1..].parse::<u32>() {
                         if (1..=12).contains(&num) {
-                            vk = 0x6F + num; // F1 is 0x70, F2 is 0x71, etc.
+                            keys.push(0x6F + num);
                         }
                     }
                 } else {
                     match u.as_str() {
-                        "SPACE" => vk = 0x20,
-                        "TAB" => vk = 0x09,
-                        "ENTER" | "RETURN" => vk = 0x0D,
-                        "ESC" | "ESCAPE" => vk = 0x1B,
+                        "SPACE" => keys.push(0x20),
+                        "TAB" => keys.push(0x09),
+                        "ENTER" | "RETURN" => keys.push(0x0D),
+                        "ESC" | "ESCAPE" => keys.push(0x1B),
                         _ => {}
                     }
                 }
@@ -64,10 +94,178 @@ pub fn parse_shortcut(shortcut_str: &str) -> Option<(u32, u32)> {
         }
     }
 
-    if vk != 0 {
-        Some((modifiers, vk))
+    if !keys.is_empty() {
+        Some(ParsedShortcut {
+            target: target.to_string(),
+            original: shortcut_str.to_string(),
+            ctrl,
+            alt,
+            shift,
+            win,
+            keys,
+        })
     } else {
         None
+    }
+}
+
+fn load_shortcuts(pm: &Arc<ProcessManager>, jiggler: &Arc<JigglerEngine>) -> Vec<ParsedShortcut> {
+    let mut list = Vec::new();
+
+    // 1. Service Shortcuts
+    let services = {
+        let map = pm.services.read().unwrap();
+        let mut svc_list = Vec::new();
+        for s_lock in map.values() {
+            let s = s_lock.lock().unwrap();
+            if let Some(ref sc) = s.config.shortcut {
+                if !sc.trim().is_empty() {
+                    svc_list.push((s.config.name.clone(), sc.clone()));
+                }
+            }
+        }
+        svc_list
+    };
+
+    for (name, sc_str) in services {
+        if let Some(parsed) = parse_shortcut(&sc_str, &name) {
+            list.push(parsed);
+        }
+    }
+
+    // 2. Mouse Jiggler Shortcut (e.g. "Ctrl+Alt+J")
+    let jiggler_sc = jiggler.get_config().shortcut;
+    if !jiggler_sc.trim().is_empty() {
+        if let Some(parsed) = parse_shortcut(&jiggler_sc, "__mouse_jiggler__") {
+            list.push(parsed);
+        }
+    }
+
+    list
+}
+
+unsafe extern "system" fn low_level_keyboard_proc(
+    code: i32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    unsafe {
+        if code >= 0 && (wparam == WM_KEYDOWN as WPARAM || wparam == WM_SYSKEYDOWN as WPARAM) {
+            let kbd = *(lparam as *const KBDLLHOOKSTRUCT);
+            let mut raw_vk = kbd.vkCode as u32;
+
+            // Normalize Numpad 0..9 to standard '0'..'9' (0x30..0x39)
+            if (0x60..=0x69).contains(&raw_vk) {
+                raw_vk = 0x30 + (raw_vk - 0x60);
+            }
+
+            // Filter out modifier keys themselves (tracked via GetAsyncKeyState)
+            let is_modifier_key = matches!(
+                raw_vk,
+                0x10 | 0xA0 | 0xA1 | // Shift
+                0x11 | 0xA2 | 0xA3 | // Ctrl
+                0x12 | 0xA4 | 0xA5 | // Alt / Menu
+                0x5B | 0x5C          // Win
+            );
+
+            if !is_modifier_key {
+                let is_alt = ((GetAsyncKeyState(VK_MENU as i32) as u16 & 0x8000) != 0)
+                    || ((kbd.flags & 0x20) != 0);
+                let is_ctrl = (GetAsyncKeyState(VK_CONTROL as i32) as u16 & 0x8000) != 0;
+                let is_shift = (GetAsyncKeyState(VK_SHIFT as i32) as u16 & 0x8000) != 0;
+                let is_win = ((GetAsyncKeyState(VK_LWIN as i32) as u16 & 0x8000) != 0)
+                    || ((GetAsyncKeyState(VK_RWIN as i32) as u16 & 0x8000) != 0);
+
+                let mut matched_target: Option<String> = None;
+                let mut pm_opt = None;
+                let mut jiggler_opt = None;
+
+                if let Ok(mut guard) = HOTKEY_STATE.lock() {
+                    if let Some(state) = guard.as_mut() {
+                        // Retain keys pressed in the last 1200ms
+                        state
+                            .recent_keys
+                            .retain(|k| k.time.elapsed() < Duration::from_millis(1200));
+
+                        state.recent_keys.push(KeyRecord {
+                            vk: raw_vk,
+                            time: Instant::now(),
+                            alt: is_alt,
+                            ctrl: is_ctrl,
+                            shift: is_shift,
+                            win: is_win,
+                        });
+
+                        for sc in &state.shortcuts {
+                            let n = sc.keys.len();
+                            if state.recent_keys.len() < n {
+                                continue;
+                            }
+
+                            let tail = &state.recent_keys[state.recent_keys.len() - n..];
+                            let keys_match = tail
+                                .iter()
+                                .zip(sc.keys.iter())
+                                .all(|(rec, &expected_vk)| rec.vk == expected_vk);
+
+                            if !keys_match {
+                                continue;
+                            }
+
+                            let modifiers_match = if n == 1 {
+                                tail[0].ctrl == sc.ctrl
+                                    && tail[0].alt == sc.alt
+                                    && tail[0].shift == sc.shift
+                                    && tail[0].win == sc.win
+                            } else {
+                                let had_ctrl = tail.iter().any(|k| k.ctrl);
+                                let had_alt = tail.iter().any(|k| k.alt);
+                                let had_shift = tail.iter().any(|k| k.shift);
+                                let had_win = tail.iter().any(|k| k.win);
+
+                                (sc.ctrl == had_ctrl || (!sc.ctrl && !is_ctrl))
+                                    && (sc.alt == had_alt || (!sc.alt && !is_alt))
+                                    && (sc.shift == had_shift || (!sc.shift && !is_shift))
+                                    && (sc.win == had_win || (!sc.win && !is_win))
+                            };
+
+                            if modifiers_match {
+                                let now = Instant::now();
+                                let should_trigger = match state.last_trigger.get(&sc.target) {
+                                    Some(&prev) => {
+                                        now.duration_since(prev) > Duration::from_millis(400)
+                                    }
+                                    None => true,
+                                };
+
+                                if should_trigger {
+                                    state.last_trigger.insert(sc.target.clone(), now);
+                                    matched_target = Some(sc.target.clone());
+                                    pm_opt = Some(state.pm.clone());
+                                    jiggler_opt = Some(state.jiggler.clone());
+                                }
+                                state.recent_keys.clear();
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(target) = matched_target {
+                    if let (Some(pm), Some(jiggler)) = (pm_opt, jiggler_opt) {
+                        thread::spawn(move || {
+                            if target == "__mouse_jiggler__" {
+                                jiggler.toggle();
+                            } else {
+                                pm.toggle_service(&target);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
+        CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam)
     }
 }
 
@@ -98,98 +296,59 @@ impl HotkeyManager {
                 *guard = Some(tid);
             }
 
-            // Force creation of Win32 message queue for this background thread
-            unsafe {
-                let mut dummy_msg: MSG = std::mem::zeroed();
-                PeekMessageW(&mut dummy_msg, 0 as HWND, 0, 0, 0);
+            // Initialize global state
+            let shortcuts = load_shortcuts(&pm, &jiggler);
+            {
+                let mut guard = HOTKEY_STATE.lock().unwrap();
+                *guard = Some(HotkeyState {
+                    pm: pm.clone(),
+                    jiggler: jiggler.clone(),
+                    shortcuts,
+                    recent_keys: Vec::new(),
+                    last_trigger: HashMap::new(),
+                });
             }
 
-            let mut hotkey_map: HashMap<i32, String> = HashMap::new();
-            let mut registered_ids: Vec<i32> = Vec::new();
-
-            let unregister_all = |registered_ids: &mut Vec<i32>| {
-                for &id in registered_ids.iter() {
-                    unsafe {
-                        UnregisterHotKey(0 as HWND, id);
-                    }
-                }
-                registered_ids.clear();
+            // Install WH_KEYBOARD_LL hook
+            let hook = unsafe {
+                SetWindowsHookExW(
+                    WH_KEYBOARD_LL,
+                    Some(low_level_keyboard_proc),
+                    0 as HINSTANCE,
+                    0,
+                )
             };
 
-            let register_all = |registered_ids: &mut Vec<i32>, hotkey_map: &mut HashMap<i32, String>| {
-                unregister_all(registered_ids);
-                hotkey_map.clear();
+            if hook.is_null() {
+                eprintln!("[Hotkeys] Failed to install WH_KEYBOARD_LL hook");
+                return;
+            }
 
-                let mut current_id: i32 = 1000;
-
-                // 1. Register Service Shortcuts
-                let services = {
-                    let map = pm.services.read().unwrap();
-                    let mut list = Vec::new();
-                    for s_lock in map.values() {
-                        let s = s_lock.lock().unwrap();
-                        if let Some(ref sc) = s.config.shortcut {
-                            if !sc.trim().is_empty() {
-                                list.push((s.config.name.clone(), sc.clone()));
-                            }
-                        }
-                    }
-                    list
-                };
-
-                for (name, sc_str) in services {
-                    if let Some((mods, vk)) = parse_shortcut(&sc_str) {
-                        current_id += 1;
-                        let ok = unsafe { RegisterHotKey(0 as HWND, current_id, mods, vk) };
-                        if ok != 0 {
-                            hotkey_map.insert(current_id, name);
-                            registered_ids.push(current_id);
-                        }
-                    }
-                }
-
-                // 2. Register Mouse Jiggler Shortcut (e.g. "Ctrl+Alt+J")
-                let jiggler_sc = jiggler.get_config().shortcut;
-                if !jiggler_sc.trim().is_empty() {
-                    if let Some((mods, vk)) = parse_shortcut(&jiggler_sc) {
-                        current_id += 1;
-                        let ok = unsafe { RegisterHotKey(0 as HWND, current_id, mods, vk) };
-                        if ok != 0 {
-                            hotkey_map.insert(current_id, "__mouse_jiggler__".to_string());
-                            registered_ids.push(current_id);
-                        }
-                    }
-                }
-            };
-
-            register_all(&mut registered_ids, &mut hotkey_map);
-
-            // Win32 Message Loop
+            // Win32 message loop
             unsafe {
                 let mut msg: MSG = std::mem::zeroed();
                 while GetMessageW(&mut msg, 0 as HWND, 0, 0) > 0 {
                     match msg.message {
-                        WM_HOTKEY => {
-                            let hk_id = msg.wParam as i32;
-                            if let Some(target) = hotkey_map.get(&hk_id).cloned() {
-                                if target == "__mouse_jiggler__" {
-                                    jiggler.toggle();
-                                } else {
-                                    pm.toggle_service(&target);
+                        WM_RELOAD_HOTKEYS => {
+                            let updated = load_shortcuts(&pm, &jiggler);
+                            if let Ok(mut guard) = HOTKEY_STATE.lock() {
+                                if let Some(state) = guard.as_mut() {
+                                    state.shortcuts = updated;
+                                    state.recent_keys.clear();
                                 }
                             }
                         }
-                        WM_RELOAD_HOTKEYS => {
-                            register_all(&mut registered_ids, &mut hotkey_map);
-                        }
                         WM_STOP_HOTKEYS => {
-                            unregister_all(&mut registered_ids);
                             break;
                         }
                         _ => {}
                     }
                 }
-                unregister_all(&mut registered_ids);
+
+                UnhookWindowsHookEx(hook);
+                if let Ok(mut guard) = HOTKEY_STATE.lock() {
+                    *guard = None;
+                }
             }
         });
     }
