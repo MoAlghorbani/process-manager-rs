@@ -4,14 +4,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-    KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN, WM_USER,
+    CallNextHookEx, GetMessageW, PeekMessageW, PostThreadMessageW, SetWindowsHookExW,
+    UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
 };
 
 pub const WM_RELOAD_HOTKEYS: u32 = WM_USER + 101;
@@ -44,6 +46,10 @@ struct HotkeyState {
     shortcuts: Vec<ParsedShortcut>,
     recent_keys: Vec<KeyRecord>,
     last_trigger: HashMap<String, Instant>,
+    ctrl_down: bool,
+    alt_down: bool,
+    shift_down: bool,
+    win_down: bool,
 }
 
 static HOTKEY_STATE: Mutex<Option<HotkeyState>> = Mutex::new(None);
@@ -150,7 +156,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     unsafe {
-        if code >= 0 && (wparam == WM_KEYDOWN as WPARAM || wparam == WM_SYSKEYDOWN as WPARAM) {
+        if code >= 0 {
             let kbd = *(lparam as *const KBDLLHOOKSTRUCT);
             let mut raw_vk = kbd.vkCode as u32;
 
@@ -159,33 +165,61 @@ unsafe extern "system" fn low_level_keyboard_proc(
                 raw_vk = 0x30 + (raw_vk - 0x60);
             }
 
-            // Filter out modifier keys themselves (tracked via GetAsyncKeyState)
-            let is_modifier_key = matches!(
-                raw_vk,
-                0x10 | 0xA0 | 0xA1 | // Shift
-                0x11 | 0xA2 | 0xA3 | // Ctrl
-                0x12 | 0xA4 | 0xA5 | // Alt / Menu
-                0x5B | 0x5C          // Win
-            );
+            let is_down = wparam == WM_KEYDOWN as WPARAM || wparam == WM_SYSKEYDOWN as WPARAM;
+            let is_up = wparam == WM_KEYUP as WPARAM || wparam == WM_SYSKEYUP as WPARAM;
 
-            if !is_modifier_key {
-                let is_alt = ((GetAsyncKeyState(VK_MENU as i32) as u16 & 0x8000) != 0)
-                    || ((kbd.flags & 0x20) != 0);
-                let is_ctrl = (GetAsyncKeyState(VK_CONTROL as i32) as u16 & 0x8000) != 0;
-                let is_shift = (GetAsyncKeyState(VK_SHIFT as i32) as u16 & 0x8000) != 0;
-                let is_win = ((GetAsyncKeyState(VK_LWIN as i32) as u16 & 0x8000) != 0)
-                    || ((GetAsyncKeyState(VK_RWIN as i32) as u16 & 0x8000) != 0);
+            let is_ctrl_key = matches!(raw_vk, 0x11 | 0xA2 | 0xA3);
+            let is_alt_key = matches!(raw_vk, 0x12 | 0xA4 | 0xA5);
+            let is_shift_key = matches!(raw_vk, 0x10 | 0xA0 | 0xA1);
+            let is_win_key = matches!(raw_vk, 0x5B | 0x5C);
+            let is_modifier = is_ctrl_key || is_alt_key || is_shift_key || is_win_key;
 
-                let mut matched_target: Option<String> = None;
-                let mut pm_opt = None;
-                let mut jiggler_opt = None;
+            if let Ok(mut guard) = HOTKEY_STATE.lock() {
+                if let Some(state) = guard.as_mut() {
+                    if is_down {
+                        if is_ctrl_key {
+                            state.ctrl_down = true;
+                        }
+                        if is_alt_key {
+                            state.alt_down = true;
+                        }
+                        if is_shift_key {
+                            state.shift_down = true;
+                        }
+                        if is_win_key {
+                            state.win_down = true;
+                        }
+                    } else if is_up {
+                        if is_ctrl_key {
+                            state.ctrl_down = false;
+                        }
+                        if is_alt_key {
+                            state.alt_down = false;
+                        }
+                        if is_shift_key {
+                            state.shift_down = false;
+                        }
+                        if is_win_key {
+                            state.win_down = false;
+                        }
+                    }
 
-                if let Ok(mut guard) = HOTKEY_STATE.lock() {
-                    if let Some(state) = guard.as_mut() {
-                        // Retain keys pressed in the last 1200ms
+                    if is_down && !is_modifier {
+                        let is_alt = state.alt_down
+                            || ((GetAsyncKeyState(VK_MENU as i32) as u16 & 0x8000) != 0)
+                            || ((kbd.flags & 0x20) != 0);
+                        let is_ctrl = state.ctrl_down
+                            || ((GetAsyncKeyState(VK_CONTROL as i32) as u16 & 0x8000) != 0);
+                        let is_shift = state.shift_down
+                            || ((GetAsyncKeyState(VK_SHIFT as i32) as u16 & 0x8000) != 0);
+                        let is_win = state.win_down
+                            || ((GetAsyncKeyState(VK_LWIN as i32) as u16 & 0x8000) != 0)
+                            || ((GetAsyncKeyState(VK_RWIN as i32) as u16 & 0x8000) != 0);
+
+                        // Retain keys pressed within last 1500ms
                         state
                             .recent_keys
-                            .retain(|k| k.time.elapsed() < Duration::from_millis(1200));
+                            .retain(|k| k.time.elapsed() < Duration::from_millis(1500));
 
                         state.recent_keys.push(KeyRecord {
                             vk: raw_vk,
@@ -196,6 +230,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                             win: is_win,
                         });
 
+                        let mut matched_target: Option<String> = None;
                         for sc in &state.shortcuts {
                             let n = sc.keys.len();
                             if state.recent_keys.len() < n {
@@ -206,7 +241,7 @@ unsafe extern "system" fn low_level_keyboard_proc(
                             let keys_match = tail
                                 .iter()
                                 .zip(sc.keys.iter())
-                                .all(|(rec, &expected_vk)| rec.vk == expected_vk);
+                                .all(|(rec, &expected)| rec.vk == expected);
 
                             if !keys_match {
                                 continue;
@@ -218,22 +253,22 @@ unsafe extern "system" fn low_level_keyboard_proc(
                                     && tail[0].shift == sc.shift
                                     && tail[0].win == sc.win
                             } else {
-                                let had_ctrl = tail.iter().any(|k| k.ctrl);
-                                let had_alt = tail.iter().any(|k| k.alt);
-                                let had_shift = tail.iter().any(|k| k.shift);
-                                let had_win = tail.iter().any(|k| k.win);
+                                let had_ctrl = tail.iter().any(|k| k.ctrl) || is_ctrl;
+                                let had_alt = tail.iter().any(|k| k.alt) || is_alt;
+                                let had_shift = tail.iter().any(|k| k.shift) || is_shift;
+                                let had_win = tail.iter().any(|k| k.win) || is_win;
 
-                                (sc.ctrl == had_ctrl || (!sc.ctrl && !is_ctrl))
-                                    && (sc.alt == had_alt || (!sc.alt && !is_alt))
-                                    && (sc.shift == had_shift || (!sc.shift && !is_shift))
-                                    && (sc.win == had_win || (!sc.win && !is_win))
+                                (sc.ctrl == had_ctrl)
+                                    && (sc.alt == had_alt)
+                                    && (!sc.shift || had_shift)
+                                    && (!sc.win || had_win)
                             };
 
                             if modifiers_match {
                                 let now = Instant::now();
                                 let should_trigger = match state.last_trigger.get(&sc.target) {
                                     Some(&prev) => {
-                                        now.duration_since(prev) > Duration::from_millis(400)
+                                        now.duration_since(prev) > Duration::from_millis(350)
                                     }
                                     None => true,
                                 };
@@ -241,25 +276,23 @@ unsafe extern "system" fn low_level_keyboard_proc(
                                 if should_trigger {
                                     state.last_trigger.insert(sc.target.clone(), now);
                                     matched_target = Some(sc.target.clone());
-                                    pm_opt = Some(state.pm.clone());
-                                    jiggler_opt = Some(state.jiggler.clone());
                                 }
                                 state.recent_keys.clear();
                                 break;
                             }
                         }
-                    }
-                }
 
-                if let Some(target) = matched_target {
-                    if let (Some(pm), Some(jiggler)) = (pm_opt, jiggler_opt) {
-                        thread::spawn(move || {
-                            if target == "__mouse_jiggler__" {
-                                jiggler.toggle();
-                            } else {
-                                pm.toggle_service(&target);
-                            }
-                        });
+                        if let Some(target) = matched_target {
+                            let pm = state.pm.clone();
+                            let jiggler = state.jiggler.clone();
+                            thread::spawn(move || {
+                                if target == "__mouse_jiggler__" {
+                                    jiggler.toggle();
+                                } else {
+                                    pm.toggle_service(&target);
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -296,6 +329,12 @@ impl HotkeyManager {
                 *guard = Some(tid);
             }
 
+            // Force Win32 message queue creation for this background thread
+            unsafe {
+                let mut dummy_msg: MSG = std::mem::zeroed();
+                PeekMessageW(&mut dummy_msg, 0 as HWND, 0, 0, 0);
+            }
+
             // Initialize global state
             let shortcuts = load_shortcuts(&pm, &jiggler);
             {
@@ -306,15 +345,20 @@ impl HotkeyManager {
                     shortcuts,
                     recent_keys: Vec::new(),
                     last_trigger: HashMap::new(),
+                    ctrl_down: false,
+                    alt_down: false,
+                    shift_down: false,
+                    win_down: false,
                 });
             }
 
-            // Install WH_KEYBOARD_LL hook
+            // Install WH_KEYBOARD_LL hook using the current executable module handle
+            let hmod = unsafe { GetModuleHandleW(std::ptr::null()) };
             let hook = unsafe {
                 SetWindowsHookExW(
                     WH_KEYBOARD_LL,
                     Some(low_level_keyboard_proc),
-                    0 as HINSTANCE,
+                    hmod,
                     0,
                 )
             };
