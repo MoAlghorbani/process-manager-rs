@@ -45,6 +45,9 @@
         <span class="tab-icon">💬</span> LAN Chat
         <span class="chat-tab-badge hidden" id="badge-chat-unread">0</span>
       </button>
+      <button class="nav-tab" data-tab="tab-media" id="tab-btn-media">
+        <span class="tab-icon">🎬</span> Media Player
+      </button>
     </nav>
 
     <div class="header-actions">
@@ -742,6 +745,132 @@
                 <!-- Rendered dynamically -->
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================== -->
+    <!-- TAB 8: EMBEDDED MEDIA PLAYER (VIDEOS & AUDIOS) -->
+    <!-- ============================================== -->
+    <section id="tab-media" class="tab-pane">
+      <!-- Media Workspace Selector Bar -->
+      <div class="media-workspace-bar">
+        <div class="media-workspace-left">
+          <span class="media-workspace-label">📁 Media Workspace:</span>
+          <div class="media-workspace-input-wrap">
+            <input type="text" id="input-media-workspace" class="media-workspace-input" placeholder="No workspace folder selected. Click 'Browse Folder' to scan your videos and audios..." readonly />
+          </div>
+          <button class="btn btn-primary" id="btn-browse-media-folder">📁 Browse Folder</button>
+          <button class="btn btn-secondary" id="btn-rescan-media" title="Rescan folder and all sub-files">🔄 Rescan</button>
+          <button class="btn btn-secondary" id="btn-open-media-folder" title="Open workspace folder in File Explorer">📂 Open Folder</button>
+        </div>
+        <div class="media-workspace-right">
+          <span class="badge badge-subtle" id="badge-media-total">0 Files</span>
+          <span class="badge badge-subtle" id="badge-media-videos">0 Videos</span>
+          <span class="badge badge-subtle" id="badge-media-audios">0 Audios</span>
+          <span class="badge badge-subtle" id="badge-media-size">0 B</span>
+        </div>
+      </div>
+
+      <!-- Main Media Stage & Playlist Layout -->
+      <div class="media-main-layout">
+        <!-- Left Side: Player Stage -->
+        <div class="media-player-stage">
+          <!-- Now Playing Info Header -->
+          <div class="media-now-playing-bar">
+            <div class="media-now-playing-info">
+              <span class="media-type-badge" id="media-playing-type-badge">STANDBY</span>
+              <div class="media-playing-text-block">
+                <h3 class="media-playing-title" id="media-playing-title">Select a video or audio file to play</h3>
+                <span class="media-playing-meta" id="media-playing-meta">Deep sub-file scanning active • Ready</span>
+              </div>
+            </div>
+            <div class="media-now-playing-actions">
+              <button class="btn btn-sm btn-secondary" id="btn-media-prev" title="Previous Track">⏮ Prev</button>
+              <button class="btn btn-sm btn-secondary" id="btn-media-next" title="Next Track">⏭ Next</button>
+              <button class="btn btn-sm btn-secondary" id="btn-media-open-ext" title="Open file in external default Windows player">↗ Open in OS</button>
+            </div>
+          </div>
+
+          <!-- Video / Audio Player Stage Container -->
+          <div class="media-stage-screen" id="media-stage-screen">
+            <!-- Video Player Element -->
+            <video id="media-video-element" class="media-video-player hidden" controls preload="metadata"></video>
+
+            <!-- Audio Player Card (Displayed for audio tracks) -->
+            <div id="media-audio-card" class="media-audio-card hidden">
+              <div class="audio-art-icon-wrap">
+                <span class="audio-art-icon">🎵</span>
+              </div>
+              <h4 id="audio-card-title" class="audio-card-title">Audio Track</h4>
+              <p id="audio-card-path" class="audio-card-path">Subfolder / Track</p>
+              <div class="audio-visualizer-bars">
+                <span class="vbar v1"></span><span class="vbar v2"></span><span class="vbar v3"></span><span class="vbar v4"></span>
+                <span class="vbar v5"></span><span class="vbar v6"></span><span class="vbar v7"></span><span class="vbar v8"></span>
+                <span class="vbar v9"></span><span class="vbar v10"></span><span class="vbar v11"></span><span class="vbar v12"></span>
+              </div>
+              <audio id="media-audio-element" class="media-audio-player" controls preload="metadata"></audio>
+            </div>
+
+            <!-- Empty / Idle Placeholder -->
+            <div id="media-empty-placeholder" class="media-empty-placeholder">
+              <div class="empty-media-icon">🎬</div>
+              <h4>No Media Selected</h4>
+              <p>Browse a workspace folder containing your videos and audios. All nested sub-folders and files will appear in the library on the right.</p>
+              <button class="btn btn-primary" id="btn-placeholder-browse" style="margin-top: 14px;">📁 Choose Media Workspace</button>
+            </div>
+          </div>
+
+          <!-- Extra Playback Controls Bar -->
+          <div class="media-playback-options-bar">
+            <div class="media-options-left">
+              <label class="media-ctrl-label">Speed:</label>
+              <select id="select-playback-speed" class="select-sm">
+                <option value="0.5">0.5x</option>
+                <option value="0.75">0.75x</option>
+                <option value="1.0" selected>1.0x Normal</option>
+                <option value="1.25">1.25x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2.0">2.0x</option>
+              </select>
+              <label class="checkbox-label" style="margin-left: 12px;">
+                <input type="checkbox" id="chk-media-loop" /> Loop
+              </label>
+              <label class="checkbox-label" style="margin-left: 12px;">
+                <input type="checkbox" id="chk-media-autoplay-next" checked /> Autoplay Next
+              </label>
+            </div>
+            <div class="media-options-right">
+              <button class="btn btn-sm btn-secondary" id="btn-media-pip" title="Picture-in-Picture">🖼 Mini PiP</button>
+              <button class="btn btn-sm btn-secondary" id="btn-media-fullscreen" title="Fullscreen">⛶ Fullscreen</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Side: Library & Sub-Files Explorer -->
+        <div class="media-library-sidebar">
+          <div class="media-sidebar-header">
+            <div class="media-search-wrap">
+              <input type="text" id="input-media-search" placeholder="🔍 Search sub-files or folders..." class="media-search-input" />
+              <button id="btn-clear-media-search" class="btn-clear-search hidden">✕</button>
+            </div>
+            <div class="media-filters-strip">
+              <div class="filter-pills" id="media-type-pills">
+                <button class="pill active" data-type="all">All (<span id="pill-count-all">0</span>)</button>
+                <button class="pill" data-type="video">🎬 Videos (<span id="pill-count-videos">0</span>)</button>
+                <button class="pill" data-type="audio">🎵 Audios (<span id="pill-count-audios">0</span>)</button>
+              </div>
+              <div class="media-view-toggle">
+                <button class="btn btn-sm btn-secondary active" id="btn-media-view-folders" title="Group by Sub-Folder">📁 Folders</button>
+                <button class="btn btn-sm btn-secondary" id="btn-media-view-flat" title="Flat List">📄 Flat</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Files List Container -->
+          <div class="media-items-scroll" id="media-items-container">
+            <div class="media-empty-list">No media loaded. Choose a folder above to scan sub-files.</div>
           </div>
         </div>
       </div>

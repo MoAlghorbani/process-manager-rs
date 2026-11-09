@@ -25,6 +25,7 @@ pub struct AppState {
     pub ytdl_engine: Arc<YtDlpEngine>,
     pub chat_engine: Arc<ChatEngine>,
     pub hotkey_mgr: Arc<crate::hotkeys::HotkeyManager>,
+    pub media_server: Arc<crate::media::MediaServer>,
 }
 
 // ==========================================
@@ -817,4 +818,33 @@ pub fn send_chat_buzz(
     state: State<'_, AppState>,
 ) -> Result<ChatMessage, String> {
     state.chat_engine.send_buzz(&recipient_id, &buzz_type)
+}
+
+// ==========================================
+// 8. Media Player & Sub-files Scanner Commands
+// ==========================================
+
+#[tauri::command]
+pub fn get_media_server_port(state: State<'_, AppState>) -> u16 {
+    state.media_server.get_port()
+}
+
+#[tauri::command]
+pub fn pick_media_workspace() -> Option<String> {
+    crate::media::pick_media_folder()
+}
+
+#[tauri::command]
+pub fn scan_media_workspace(path: String) -> Result<crate::media::MediaScanResponse, String> {
+    crate::media::scan_media_folder(&path)
+}
+
+#[tauri::command]
+pub fn get_saved_media_workspace() -> Option<String> {
+    crate::media::get_saved_media_folder()
+}
+
+#[tauri::command]
+pub fn save_media_workspace(path: String) -> Result<(), String> {
+    crate::media::save_media_folder(&path)
 }

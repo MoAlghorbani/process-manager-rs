@@ -37,6 +37,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupDownloader();
   setupStorageManager();
   setupLanChat();
+  setupMedia();
 
   // Background Telemetry Tickers
   setInterval(pollServices, 1500);
@@ -102,6 +103,8 @@ function setupNavigation() {
         updateChatUnreadBadges();
         pollChatPeers();
         pollChatMessages(true);
+      } else if (currentTab === "tab-media") {
+        loadMediaTab();
       }
     });
   });
@@ -2902,3 +2905,584 @@ function openChatSettingsModal() {
 }
 
 window.selectChatRecipient = selectChatRecipient;
+
+// ========================================================
+// 10. EMBEDDED MEDIA PLAYER (VIDEOS & AUDIOS)
+// ========================================================
+
+let mediaServerPort = 0;
+let mediaWorkspacePath = "";
+let mediaScanData = null; // { root_path, total_count, video_count, audio_count, total_size_formatted, items: [...] }
+let currentMediaItem = null;
+let currentPlaylist = [];
+let mediaFilterType = "all"; // "all" | "video" | "audio"
+let mediaFilterSearch = "";
+let mediaViewMode = "folders"; // "folders" | "flat"
+let isMediaLoadedOnce = false;
+
+function setupMedia() {
+  const btnBrowse = document.getElementById("btn-browse-media-folder");
+  const btnPlaceholderBrowse = document.getElementById("btn-placeholder-browse");
+  const btnRescan = document.getElementById("btn-rescan-media");
+  const btnOpenFolder = document.getElementById("btn-open-media-folder");
+  const inputSearch = document.getElementById("input-media-search");
+  const btnClearSearch = document.getElementById("btn-clear-media-search");
+  const pillsContainer = document.getElementById("media-type-pills");
+  const btnViewFolders = document.getElementById("btn-media-view-folders");
+  const btnViewFlat = document.getElementById("btn-media-view-flat");
+  const btnPrev = document.getElementById("btn-media-prev");
+  const btnNext = document.getElementById("btn-media-next");
+  const btnOpenExt = document.getElementById("btn-media-open-ext");
+  const selectSpeed = document.getElementById("select-playback-speed");
+  const chkLoop = document.getElementById("chk-media-loop");
+  const chkAutoplayNext = document.getElementById("chk-media-autoplay-next");
+  const btnPip = document.getElementById("btn-media-pip");
+  const btnFullscreen = document.getElementById("btn-media-fullscreen");
+  const videoEl = document.getElementById("media-video-element");
+  const audioEl = document.getElementById("media-audio-element");
+  const audioCard = document.getElementById("media-audio-card");
+
+  btnBrowse?.addEventListener("click", () => browseAndSelectMediaWorkspace());
+  btnPlaceholderBrowse?.addEventListener("click", () => browseAndSelectMediaWorkspace());
+
+  btnRescan?.addEventListener("click", () => {
+    if (mediaWorkspacePath) {
+      scanMediaWorkspace(mediaWorkspacePath, true);
+    } else {
+      browseAndSelectMediaWorkspace();
+    }
+  });
+
+  btnOpenFolder?.addEventListener("click", () => {
+    if (mediaWorkspacePath) {
+      invoke("open_folder", { path: mediaWorkspacePath }).catch((err) => {
+        showToast(`Failed to open folder: ${err}`, "error");
+      });
+    } else {
+      showToast("Please choose a media workspace folder first.", "info");
+    }
+  });
+
+  // Search input
+  inputSearch?.addEventListener("input", (e) => {
+    mediaFilterSearch = (e.target.value || "").trim().toLowerCase();
+    if (btnClearSearch) {
+      if (mediaFilterSearch.length > 0) {
+        btnClearSearch.classList.remove("hidden");
+      } else {
+        btnClearSearch.classList.add("hidden");
+      }
+    }
+    renderMediaLibrary();
+  });
+
+  btnClearSearch?.addEventListener("click", () => {
+    if (inputSearch) inputSearch.value = "";
+    mediaFilterSearch = "";
+    btnClearSearch.classList.add("hidden");
+    renderMediaLibrary();
+  });
+
+  // Filter Pills (All / Videos / Audios)
+  pillsContainer?.querySelectorAll(".pill").forEach((pill) => {
+    pill.addEventListener("click", () => {
+      pillsContainer.querySelectorAll(".pill").forEach((p) => p.classList.remove("active"));
+      pill.classList.add("active");
+      mediaFilterType = pill.getAttribute("data-type") || "all";
+      renderMediaLibrary();
+    });
+  });
+
+  // View Mode Toggles (Folders vs Flat)
+  btnViewFolders?.addEventListener("click", () => {
+    mediaViewMode = "folders";
+    btnViewFolders.classList.add("active");
+    btnViewFlat?.classList.remove("active");
+    renderMediaLibrary();
+  });
+
+  btnViewFlat?.addEventListener("click", () => {
+    mediaViewMode = "flat";
+    btnViewFlat.classList.add("active");
+    btnViewFolders?.classList.remove("active");
+    renderMediaLibrary();
+  });
+
+  // Prev / Next Buttons
+  btnPrev?.addEventListener("click", () => playPrevMedia());
+  btnNext?.addEventListener("click", () => playNextMedia());
+
+  // Open in OS player
+  btnOpenExt?.addEventListener("click", () => {
+    if (currentMediaItem) {
+      invoke("open_file", { path: currentMediaItem.abs_path }).catch((err) => {
+        showToast(`Failed to open in OS player: ${err}`, "error");
+      });
+    } else {
+      showToast("No media item currently selected.", "info");
+    }
+  });
+
+  // Playback Speed
+  selectSpeed?.addEventListener("change", () => {
+    const rate = parseFloat(selectSpeed.value) || 1.0;
+    if (videoEl) videoEl.playbackRate = rate;
+    if (audioEl) audioEl.playbackRate = rate;
+  });
+
+  // Loop toggle
+  chkLoop?.addEventListener("change", () => {
+    const isLoop = !!chkLoop.checked;
+    if (videoEl) videoEl.loop = isLoop;
+    if (audioEl) audioEl.loop = isLoop;
+  });
+
+  // Mini PiP
+  btnPip?.addEventListener("click", async () => {
+    if (!videoEl || videoEl.classList.contains("hidden")) {
+      showToast("PiP is available when playing video.", "info");
+      return;
+    }
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+      } else {
+        await videoEl.requestPictureInPicture();
+      }
+    } catch (err) {
+      showToast(`PiP error: ${err}`, "error");
+    }
+  });
+
+  // Fullscreen
+  btnFullscreen?.addEventListener("click", () => {
+    const stage = document.getElementById("media-stage-screen");
+    if (!stage) return;
+    if (!document.fullscreenElement) {
+      stage.requestFullscreen().catch((err) => {
+        showToast(`Fullscreen error: ${err}`, "error");
+      });
+    } else {
+      document.exitFullscreen().catch(console.error);
+    }
+  });
+
+  // Video element events
+  videoEl?.addEventListener("ended", () => {
+    if (chkAutoplayNext?.checked && !videoEl.loop) {
+      playNextMedia();
+    }
+  });
+
+  // Audio element events
+  audioEl?.addEventListener("play", () => {
+    audioCard?.classList.add("playing");
+  });
+  audioEl?.addEventListener("pause", () => {
+    audioCard?.classList.remove("playing");
+  });
+  audioEl?.addEventListener("ended", () => {
+    audioCard?.classList.remove("playing");
+    if (chkAutoplayNext?.checked && !audioEl.loop) {
+      playNextMedia();
+    }
+  });
+
+  // Keyboard navigation on player stage
+  window.addEventListener("keydown", (e) => {
+    if (currentTab !== "tab-media") return;
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+
+    if (e.key === " " || e.code === "Space") {
+      // Space to toggle play/pause
+      if (currentMediaItem) {
+        e.preventDefault();
+        if (currentMediaItem.media_type === "video" && videoEl) {
+          if (videoEl.paused) videoEl.play(); else videoEl.pause();
+        } else if (currentMediaItem.media_type === "audio" && audioEl) {
+          if (audioEl.paused) audioEl.play(); else audioEl.pause();
+        }
+      }
+    } else if (e.key === "ArrowRight" && e.altKey) {
+      e.preventDefault();
+      playNextMedia();
+    } else if (e.key === "ArrowLeft" && e.altKey) {
+      e.preventDefault();
+      playPrevMedia();
+    }
+  });
+}
+
+async function ensureMediaServerPort() {
+  if (mediaServerPort > 0) return mediaServerPort;
+  try {
+    const port = await invoke("get_media_server_port");
+    mediaServerPort = Number(port) || 0;
+    return mediaServerPort;
+  } catch (err) {
+    console.error("Failed to get media server port:", err);
+    return 0;
+  }
+}
+
+async function loadMediaTab() {
+  await ensureMediaServerPort();
+
+  if (isMediaLoadedOnce) return;
+  isMediaLoadedOnce = true;
+
+  try {
+    const savedPath = await invoke("get_saved_media_workspace");
+    if (savedPath && typeof savedPath === "string" && savedPath.trim().length > 0) {
+      await scanMediaWorkspace(savedPath.trim(), false);
+    }
+  } catch (err) {
+    console.warn("Could not load saved media workspace:", err);
+  }
+}
+
+async function browseAndSelectMediaWorkspace() {
+  try {
+    const selected = await invoke("pick_media_workspace");
+    if (selected && typeof selected === "string" && selected.trim().length > 0) {
+      const cleanPath = selected.trim();
+      await invoke("save_media_workspace", { path: cleanPath });
+      await scanMediaWorkspace(cleanPath, true);
+    }
+  } catch (err) {
+    showToast(`Failed to select folder: ${err}`, "error");
+  }
+}
+
+async function scanMediaWorkspace(path, notifyUser = false) {
+  const inputWorkspace = document.getElementById("input-media-workspace");
+  const itemsContainer = document.getElementById("media-items-container");
+
+  if (inputWorkspace) {
+    inputWorkspace.value = path;
+  }
+
+  if (itemsContainer) {
+    itemsContainer.innerHTML = `<div class="media-empty-list">🔄 Scanning workspace and all sub-files recursively...</div>`;
+  }
+
+  try {
+    await ensureMediaServerPort();
+    const data = await invoke("scan_media_workspace", { path });
+    mediaWorkspacePath = data.root_path;
+    mediaScanData = data;
+
+    // Badges update
+    const totalBadge = document.getElementById("badge-media-total");
+    const videosBadge = document.getElementById("badge-media-videos");
+    const audiosBadge = document.getElementById("badge-media-audios");
+    const sizeBadge = document.getElementById("badge-media-size");
+
+    const pillAll = document.getElementById("pill-count-all");
+    const pillVideos = document.getElementById("pill-count-videos");
+    const pillAudios = document.getElementById("pill-count-audios");
+
+    if (totalBadge) totalBadge.textContent = `${data.total_count} Files`;
+    if (videosBadge) videosBadge.textContent = `${data.video_count} Videos`;
+    if (audiosBadge) audiosBadge.textContent = `${data.audio_count} Audios`;
+    if (sizeBadge) sizeBadge.textContent = data.total_size_formatted;
+
+    if (pillAll) pillAll.textContent = data.total_count;
+    if (pillVideos) pillVideos.textContent = data.video_count;
+    if (pillAudios) pillAudios.textContent = data.audio_count;
+
+    renderMediaLibrary();
+
+    if (notifyUser) {
+      showToast(`Scanned ${data.total_count} files (${data.video_count} videos, ${data.audio_count} audios)`, "success");
+    }
+  } catch (err) {
+    console.error("Scan error:", err);
+    if (itemsContainer) {
+      itemsContainer.innerHTML = `<div class="media-empty-list" style="color: #f87171;">⚠️ Failed to scan directory: ${escapeHtml(String(err))}</div>`;
+    }
+    showToast(`Media scan failed: ${err}`, "error");
+  }
+}
+
+function getFilteredMediaItems() {
+  if (!mediaScanData || !Array.isArray(mediaScanData.items)) return [];
+
+  return mediaScanData.items.filter((item) => {
+    // Type filter
+    if (mediaFilterType === "video" && item.media_type !== "video") return false;
+    if (mediaFilterType === "audio" && item.media_type !== "audio") return false;
+
+    // Search filter
+    if (mediaFilterSearch.length > 0) {
+      const matchName = item.name.toLowerCase().includes(mediaFilterSearch);
+      const matchRel = item.rel_path.toLowerCase().includes(mediaFilterSearch);
+      const matchFolder = item.folder.toLowerCase().includes(mediaFilterSearch);
+      if (!matchName && !matchRel && !matchFolder) return false;
+    }
+
+    return true;
+  });
+}
+
+function renderMediaLibrary() {
+  const container = document.getElementById("media-items-container");
+  if (!container) return;
+
+  currentPlaylist = getFilteredMediaItems();
+
+  if (!mediaScanData || !mediaScanData.items || mediaScanData.items.length === 0) {
+    container.innerHTML = `<div class="media-empty-list">No video or audio files found in this workspace.<br/><span style="opacity: 0.7;">Try choosing a different directory.</span></div>`;
+    return;
+  }
+
+  if (currentPlaylist.length === 0) {
+    container.innerHTML = `<div class="media-empty-list">No media matching current filter or search query.<br/><span style="opacity: 0.7;">Check your search terms.</span></div>`;
+    return;
+  }
+
+  container.innerHTML = "";
+
+  if (mediaViewMode === "flat") {
+    // Render flat list
+    currentPlaylist.forEach((item) => {
+      container.appendChild(createMediaItemElement(item));
+    });
+  } else {
+    // Group by folder
+    const groups = new Map();
+    currentPlaylist.forEach((item) => {
+      const folderKey = item.folder || ".";
+      if (!groups.has(folderKey)) {
+        groups.set(folderKey, []);
+      }
+      groups.get(folderKey).push(item);
+    });
+
+    groups.forEach((itemsInFolder, folderName) => {
+      const groupEl = document.createElement("div");
+      groupEl.className = "media-folder-group";
+
+      const displayName = folderName === "." ? "📁 Root Directory" : `📁 ${folderName}`;
+
+      const headerEl = document.createElement("div");
+      headerEl.className = "media-folder-header";
+      headerEl.innerHTML = `
+        <div class="media-folder-header-left">
+          <span class="media-folder-chevron">▼</span>
+          <span class="media-folder-name" title="${escapeHtml(folderName)}">${escapeHtml(displayName)}</span>
+        </div>
+        <span class="media-folder-count">${itemsInFolder.length}</span>
+      `;
+
+      headerEl.addEventListener("click", () => {
+        groupEl.classList.toggle("collapsed");
+      });
+
+      const itemsWrap = document.createElement("div");
+      itemsWrap.className = "media-folder-items";
+
+      itemsInFolder.forEach((item) => {
+        itemsWrap.appendChild(createMediaItemElement(item));
+      });
+
+      groupEl.appendChild(headerEl);
+      groupEl.appendChild(itemsWrap);
+      container.appendChild(groupEl);
+    });
+  }
+}
+
+function createMediaItemElement(item) {
+  const row = document.createElement("div");
+  const isActive = currentMediaItem && currentMediaItem.abs_path === item.abs_path;
+
+  row.className = `media-item-row ${isActive ? "active" : ""}`;
+  row.setAttribute("data-path", item.abs_path);
+
+  const icon = item.media_type === "video" ? "🎬" : "🎵";
+  const folderDisplay = item.folder === "." ? "" : `${item.folder}/`;
+
+  row.innerHTML = `
+    <span class="media-item-icon">${icon}</span>
+    <div class="media-item-info">
+      <div class="media-item-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
+      <div class="media-item-sub">
+        <span>${escapeHtml(item.size_formatted)}</span>
+        <span>•</span>
+        <span title="${escapeHtml(item.rel_path)}">${escapeHtml(folderDisplay)}</span>
+        ${isActive ? '<span class="media-badge-playing">PLAYING</span>' : ""}
+      </div>
+    </div>
+    <div class="media-item-actions">
+      <button class="media-mini-btn btn-open-file-os" title="Open file in Windows default app">↗ OS</button>
+      <button class="media-mini-btn btn-open-folder-os" title="Show in File Explorer">📂</button>
+    </div>
+  `;
+
+  row.addEventListener("click", (e) => {
+    // If mini buttons clicked, don't trigger row play
+    if (e.target.closest(".media-mini-btn")) return;
+    playMediaItem(item);
+  });
+
+  const btnOpenOs = row.querySelector(".btn-open-file-os");
+  btnOpenOs?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    invoke("open_file", { path: item.abs_path }).catch((err) => {
+      showToast(`Error opening file: ${err}`, "error");
+    });
+  });
+
+  const btnOpenFolder = row.querySelector(".btn-open-folder-os");
+  btnOpenFolder?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    invoke("open_folder", { path: item.abs_path }).catch((err) => {
+      showToast(`Error opening folder: ${err}`, "error");
+    });
+  });
+
+  return row;
+}
+
+function updateMediaLibraryActiveItem() {
+  const container = document.getElementById("media-items-container");
+  if (!container) return;
+
+  container.querySelectorAll(".media-item-row").forEach((row) => {
+    const rowPath = row.getAttribute("data-path");
+    const isActive = currentMediaItem && currentMediaItem.abs_path === rowPath;
+
+    if (isActive) {
+      row.classList.add("active");
+      const sub = row.querySelector(".media-item-sub");
+      if (sub && !sub.querySelector(".media-badge-playing")) {
+        const badge = document.createElement("span");
+        badge.className = "media-badge-playing";
+        badge.textContent = "PLAYING";
+        sub.appendChild(badge);
+      }
+    } else {
+      row.classList.remove("active");
+      const badge = row.querySelector(".media-badge-playing");
+      if (badge) badge.remove();
+    }
+  });
+}
+
+function playMediaItem(item) {
+  if (!item) return;
+  currentMediaItem = item;
+
+  const videoEl = document.getElementById("media-video-element");
+  const audioEl = document.getElementById("media-audio-element");
+  const audioCard = document.getElementById("media-audio-card");
+  const placeholder = document.getElementById("media-empty-placeholder");
+  const typeBadge = document.getElementById("media-playing-type-badge");
+  const titleEl = document.getElementById("media-playing-title");
+  const metaEl = document.getElementById("media-playing-meta");
+  const speedSelect = document.getElementById("select-playback-speed");
+  const chkLoop = document.getElementById("chk-media-loop");
+
+  const speed = parseFloat(speedSelect?.value) || 1.0;
+  const isLoop = !!chkLoop?.checked;
+
+  if (typeBadge) {
+    typeBadge.textContent = item.media_type.toUpperCase();
+    typeBadge.className = `media-type-badge ${item.media_type}`;
+  }
+  if (titleEl) {
+    titleEl.textContent = item.name;
+    titleEl.title = item.name;
+  }
+  if (metaEl) {
+    metaEl.textContent = `${item.rel_path} • ${item.size_formatted} • .${item.extension.toUpperCase()}`;
+    metaEl.title = item.abs_path;
+  }
+
+  placeholder?.classList.add("hidden");
+
+  // Construct streaming URL from the local Tokio HTTP server
+  const streamUrl = `http://127.0.0.1:${mediaServerPort}/stream?path=${encodeURIComponent(item.abs_path)}`;
+
+  if (item.media_type === "video") {
+    // Hide audio, show video
+    if (audioEl) {
+      audioEl.pause();
+      audioEl.removeAttribute("src");
+    }
+    audioCard?.classList.add("hidden");
+    audioCard?.classList.remove("playing");
+
+    if (videoEl) {
+      videoEl.classList.remove("hidden");
+      videoEl.src = streamUrl;
+      videoEl.playbackRate = speed;
+      videoEl.loop = isLoop;
+      videoEl.play().catch((err) => {
+        console.warn("Video playback autoplay note:", err);
+      });
+    }
+  } else {
+    // Hide video, show audio card
+    if (videoEl) {
+      videoEl.pause();
+      videoEl.removeAttribute("src");
+      videoEl.classList.add("hidden");
+    }
+
+    const audioTitle = document.getElementById("audio-card-title");
+    const audioPath = document.getElementById("audio-card-path");
+    if (audioTitle) audioTitle.textContent = item.name;
+    if (audioPath) audioPath.textContent = item.rel_path;
+
+    if (audioCard) audioCard.classList.remove("hidden");
+
+    if (audioEl) {
+      audioEl.src = streamUrl;
+      audioEl.playbackRate = speed;
+      audioEl.loop = isLoop;
+      audioEl.play().catch((err) => {
+        console.warn("Audio playback autoplay note:", err);
+      });
+    }
+  }
+
+  updateMediaLibraryActiveItem();
+}
+
+function playNextMedia() {
+  if (!currentPlaylist || currentPlaylist.length === 0) return;
+
+  let nextIdx = 0;
+  if (currentMediaItem) {
+    const idx = currentPlaylist.findIndex((x) => x.abs_path === currentMediaItem.abs_path);
+    if (idx !== -1 && idx + 1 < currentPlaylist.length) {
+      nextIdx = idx + 1;
+    } else {
+      nextIdx = 0; // Wrap to start
+    }
+  }
+
+  playMediaItem(currentPlaylist[nextIdx]);
+}
+
+function playPrevMedia() {
+  if (!currentPlaylist || currentPlaylist.length === 0) return;
+
+  let prevIdx = currentPlaylist.length - 1;
+  if (currentMediaItem) {
+    const idx = currentPlaylist.findIndex((x) => x.abs_path === currentMediaItem.abs_path);
+    if (idx > 0) {
+      prevIdx = idx - 1;
+    } else {
+      prevIdx = currentPlaylist.length - 1; // Wrap to end
+    }
+  }
+
+  playMediaItem(currentPlaylist[prevIdx]);
+}
+
+window.playMediaItem = playMediaItem;
+window.browseAndSelectMediaWorkspace = browseAndSelectMediaWorkspace;
+window.scanMediaWorkspace = scanMediaWorkspace;

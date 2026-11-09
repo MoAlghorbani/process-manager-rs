@@ -6,6 +6,7 @@ pub mod credentials;
 pub mod hotkeys;
 pub mod jiggler;
 pub mod manager;
+pub mod media;
 pub mod models;
 pub mod todo;
 pub mod win32;
@@ -18,6 +19,7 @@ use crate::credentials::CredentialStore;
 use crate::hotkeys::HotkeyManager;
 use crate::jiggler::JigglerEngine;
 use crate::manager::ProcessManager;
+use crate::media::MediaServer;
 use crate::todo::TodoStore;
 use crate::ytdl::YtDlpEngine;
 use std::sync::Arc;
@@ -32,12 +34,14 @@ pub fn run() {
     let ytdl_engine = Arc::new(YtDlpEngine::new());
     let chat_engine = Arc::new(ChatEngine::new());
     let hotkey_mgr = Arc::new(HotkeyManager::new(pm.clone(), jiggler.clone()));
+    let media_server = Arc::new(MediaServer::new());
 
     // Start background watchers & hotkey listener
     clipboard_watcher.start();
     todo_store.start_notification_worker();
     chat_engine.start();
     hotkey_mgr.start();
+    media_server.start();
 
     let state = AppState {
         pm: pm.clone(),
@@ -48,6 +52,7 @@ pub fn run() {
         ytdl_engine: ytdl_engine.clone(),
         chat_engine: chat_engine.clone(),
         hotkey_mgr: hotkey_mgr.clone(),
+        media_server: media_server.clone(),
     };
 
     tauri::Builder::default()
@@ -140,6 +145,12 @@ pub fn run() {
             commands::inspect_storage_dir,
             commands::pick_storage_folder,
             commands::set_storage_dir,
+            // Media Player & Workspace
+            commands::get_media_server_port,
+            commands::pick_media_workspace,
+            commands::scan_media_workspace,
+            commands::get_saved_media_workspace,
+            commands::save_media_workspace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Process Manager application");
