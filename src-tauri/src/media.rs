@@ -281,7 +281,21 @@ impl MediaServer {
     pub fn start(&self) {
         let port_atomic = self.port.clone();
 
-        tokio::spawn(async move {
+        std::thread::Builder::new()
+            .name("media-streaming-server".to_string())
+            .spawn(move || {
+                let rt = match tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("[MediaServer] Failed to create Tokio runtime: {}", e);
+                        return;
+                    }
+                };
+
+                rt.block_on(async move {
             let listener = match TcpListener::bind("127.0.0.1:0").await {
                 Ok(l) => l,
                 Err(e) => {
@@ -444,7 +458,9 @@ impl MediaServer {
                     }
                 });
             }
-        });
+                });
+            })
+            .expect("Failed to spawn media streaming server thread");
     }
 }
 
