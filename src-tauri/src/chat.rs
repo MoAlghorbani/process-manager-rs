@@ -556,7 +556,8 @@ impl ChatEngine {
                                         file_size,
                                         transfer_port,
                                     } => {
-                                        if recipient_id == my_config.user_id && sender_id != my_config.user_id {
+                                        let for_me = recipient_id == "all" || recipient_id == my_config.user_id;
+                                        if for_me && sender_id != my_config.user_id {
                                             let file_info = FileTransferInfo {
                                                 transfer_id: transfer_id.clone(),
                                                 file_name: file_name.clone(),
@@ -608,8 +609,13 @@ impl ChatEngine {
                                                 }
 
                                                 if my_config.desktop_notifications {
+                                                    let notif_title = if recipient_id == "all" {
+                                                        format!("📁 File Shared in #General by {}", sender_name)
+                                                    } else {
+                                                        format!("📁 File Offer from {}", sender_name)
+                                                    };
                                                     crate::win32::show_desktop_notification(
-                                                        &format!("📁 File Offer from {}", sender_name),
+                                                        &notif_title,
                                                         &format!("{} ({})", file_name, format_size(file_size)),
                                                     );
                                                 }
@@ -624,23 +630,31 @@ impl ChatEngine {
                                     } => {
                                         if recipient_id == my_config.user_id {
                                             if !accepted {
-                                                if let Some(session) = transfers_rx.read().unwrap().get(&transfer_id) {
-                                                    let mut info = session.info.write().unwrap();
-                                                    info.status = "declined".to_string();
-                                                }
-                                                let mut msgs = messages_rx.write().unwrap();
-                                                for m in msgs.iter_mut() {
-                                                    if let Some(ref mut fi) = m.file_info {
-                                                        if fi.transfer_id == transfer_id {
-                                                            fi.status = "declined".to_string();
+                                                let is_general_offer = {
+                                                    let guard = transfers_rx.read().unwrap();
+                                                    guard.get(&transfer_id)
+                                                        .map(|s| s.info.read().unwrap().recipient_id == "all")
+                                                        .unwrap_or(false)
+                                                };
+
+                                                if !is_general_offer {
+                                                    if let Some(session) = transfers_rx.read().unwrap().get(&transfer_id) {
+                                                        let mut info = session.info.write().unwrap();
+                                                        info.status = "declined".to_string();
+                                                    }
+                                                    let mut msgs = messages_rx.write().unwrap();
+                                                    for m in msgs.iter_mut() {
+                                                        if let Some(ref mut fi) = m.file_info {
+                                                            if fi.transfer_id == transfer_id {
+                                                                fi.status = "declined".to_string();
+                                                            }
                                                         }
                                                     }
+                                                    let hist_path = history_file_rx.read().unwrap().clone();
+                                                    if let Ok(json) = serde_json::to_string_pretty(&*msgs) {
+                                                        let _ = fs::write(&hist_path, json);
+                                                    }
                                                 }
-                                                let hist_path = history_file_rx.read().unwrap().clone();
-                                                if let Ok(json) = serde_json::to_string_pretty(&*msgs) {
-                                                    let _ = fs::write(&hist_path, json);
-                                                }
-
                                             }
                                         }
                                     }
@@ -1008,10 +1022,6 @@ impl ChatEngine {
     // ==========================================
 
     pub fn send_file_offer(&self, recipient_id: &str, file_path_str: &str) -> Result<FileTransferInfo, String> {
-        if recipient_id == "all" {
-            return Err("Please select a specific peer to send files to.".to_string());
-        }
-
         let path = PathBuf::from(file_path_str);
         if !path.is_file() {
             return Err("Selected file does not exist on disk.".to_string());

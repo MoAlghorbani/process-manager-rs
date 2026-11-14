@@ -2300,27 +2300,23 @@ function renderChatPeersList() {
 }
 
 async function handleAttachFileClick() {
-  if (activeChatRecipient === "all") {
-    showToast("Please select a specific peer from the left sidebar to send a file.", "warning");
-    return;
-  }
-
   try {
     const file = await invoke("pick_file_to_send");
     if (!file) return;
 
     const formattedSize = formatBytes(file.size);
-    const confirmMsg = `Send "${file.name}" (${formattedSize}) to ${activeChatTitle}?`;
+    const targetLabel = activeChatRecipient === "all" ? "General LAN (#general)" : activeChatTitle;
+    const confirmMsg = `Share "${file.name}" (${formattedSize}) with ${targetLabel}?`;
     if (!confirm(confirmMsg)) return;
 
-    showToast(`Offering "${file.name}" to peer...`, "info");
+    showToast(`Sharing "${file.name}"...`, "info");
     await invoke("send_file_offer", {
       recipientId: activeChatRecipient,
       filePath: file.path,
     });
     await pollChatMessages(true);
   } catch (err) {
-    showToast(`Failed to send file: ${err}`, "error");
+    showToast(`Failed to share file: ${err}`, "error");
   }
 }
 
