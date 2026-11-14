@@ -640,12 +640,92 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
     });
 }
 
-pub fn flash_window_attention() {
+pub fn get_main_window_hwnd() -> windows_sys::Win32::Foundation::HWND {
     unsafe {
         let title: Vec<u16> = "Windows Process Manager & Service Supervisor (Rust)\0".encode_utf16().collect();
-        let hwnd = FindWindowW(ptr::null(), title.as_ptr());
+        let hwnd = windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(std::ptr::null(), title.as_ptr());
         if !hwnd.is_null() {
+            return hwnd;
+        }
+
+        unsafe extern "system" fn enum_win_cb(
+            h: windows_sys::Win32::Foundation::HWND,
+            lparam: windows_sys::Win32::Foundation::LPARAM,
+        ) -> windows_sys::Win32::Foundation::BOOL {
+            unsafe {
+                let mut pid = 0u32;
+                windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(h, &mut pid);
+                if pid == windows_sys::Win32::System::Threading::GetCurrentProcessId() {
+                    let is_vis = windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible(h);
+                    if is_vis != 0 {
+                        *(lparam as *mut windows_sys::Win32::Foundation::HWND) = h;
+                        return 0;
+                    }
+                }
+                1
+            }
+        }
+        let mut found: windows_sys::Win32::Foundation::HWND = std::ptr::null_mut();
+        windows_sys::Win32::UI::WindowsAndMessaging::EnumWindows(Some(enum_win_cb), &mut found as *mut _ as _);
+        found
+    }
+}
+
+pub fn flash_window_attention() {
+    let hwnd = get_main_window_hwnd();
+    if !hwnd.is_null() {
+        unsafe {
             windows_sys::Win32::UI::WindowsAndMessaging::FlashWindow(hwnd, 1);
+        }
+    }
+}
+
+pub fn activate_and_bring_to_front() {
+    let hwnd = get_main_window_hwnd();
+    if !hwnd.is_null() {
+        unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                BringWindowToTop, FlashWindow, GetForegroundWindow,
+                GetWindowThreadProcessId, IsIconic, SetForegroundWindow,
+                ShowWindow, SW_RESTORE, SW_SHOW,
+            };
+            use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+            use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+
+            #[link(name = "user32")]
+            unsafe extern "system" {
+                fn AttachThreadInput(idAttach: u32, idAttachTo: u32, fAttach: i32) -> i32;
+            }
+
+            // If minimized, restore window
+            if IsIconic(hwnd) != 0 {
+                ShowWindow(hwnd, SW_RESTORE);
+            } else {
+                ShowWindow(hwnd, SW_SHOW);
+            }
+
+            // Attach input threads to reliably bypass Windows foreground lock
+            let fg_hwnd = GetForegroundWindow();
+            let fg_thread = if !fg_hwnd.is_null() {
+                GetWindowThreadProcessId(fg_hwnd, std::ptr::null_mut())
+            } else {
+                0
+            };
+            let cur_thread = GetCurrentThreadId();
+
+            if fg_thread != 0 && fg_thread != cur_thread {
+                AttachThreadInput(cur_thread, fg_thread, 1);
+            }
+
+            BringWindowToTop(hwnd);
+            SetForegroundWindow(hwnd);
+            SetFocus(hwnd);
+
+            if fg_thread != 0 && fg_thread != cur_thread {
+                AttachThreadInput(cur_thread, fg_thread, 0);
+            }
+
+            FlashWindow(hwnd, 1);
         }
     }
 }

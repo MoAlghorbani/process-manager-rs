@@ -2064,6 +2064,7 @@ let peerSearchFilter = "";
 let activeTransfersMap = {};
 let knownTriggeredBuzzIds = new Set();
 let lastBuzzSentTime = 0;
+let isInitialMessagePoll = true;
 
 function setupLanChat() {
   const inputMsg = document.getElementById("input-chat-message");
@@ -2410,7 +2411,7 @@ window.openFolderOfFile = async (filePath) => {
 };
 
 
-function triggerBuzzEffect(buzzType, isMine = false) {
+function triggerBuzzEffect(buzzType, isMine = false, senderId = null) {
   const animClass = buzzType === "hard" ? "hard-buzz-active" : "soft-buzz-active";
   const duration = buzzType === "hard" ? 750 : 450;
 
@@ -2430,6 +2431,17 @@ function triggerBuzzEffect(buzzType, isMine = false) {
   }
 
   if (!isMine) {
+    // Bring window to foreground & restore if minimized
+    invoke("bring_app_to_front").catch((e) => console.warn("bring_app_to_front note:", e));
+
+    // If currently on another tab, switch to LAN chat
+    if (currentTab !== "tab-chat") {
+      const chatTabBtn = document.getElementById("tab-btn-chat");
+      if (chatTabBtn) {
+        chatTabBtn.click();
+      }
+    }
+
     const label = buzzType === "hard" ? "⚡ HARD BUZZ" : "🔔 Soft Buzz";
     showToast(`${label} received!`, buzzType === "hard" ? "warning" : "info");
   }
@@ -2564,23 +2576,33 @@ function renderChatMessages(msgs, forceScroll = false) {
 
   // Detect new incoming messages for audio chime & unread counting
   let hasNewOtherMsg = false;
-  msgs.forEach((m) => {
-    if (!knownMessageIds.has(m.id)) {
+  if (isInitialMessagePoll) {
+    msgs.forEach((m) => {
       knownMessageIds.add(m.id);
-      if (!m.is_mine) {
-        hasNewOtherMsg = true;
-        if (currentTab !== "tab-chat") {
-          totalUnreadChatCount++;
-          const targetKey = m.recipient_id === "all" ? "all" : m.sender_id;
-          unreadChatCounts[targetKey] = (unreadChatCounts[targetKey] || 0) + 1;
-          updateChatUnreadBadges();
+      if (m.buzz_type) {
+        knownTriggeredBuzzIds.add(m.id);
+      }
+    });
+    isInitialMessagePoll = false;
+  } else {
+    msgs.forEach((m) => {
+      if (!knownMessageIds.has(m.id)) {
+        knownMessageIds.add(m.id);
+        if (!m.is_mine) {
+          hasNewOtherMsg = true;
+          if (currentTab !== "tab-chat") {
+            totalUnreadChatCount++;
+            const targetKey = m.recipient_id === "all" ? "all" : m.sender_id;
+            unreadChatCounts[targetKey] = (unreadChatCounts[targetKey] || 0) + 1;
+            updateChatUnreadBadges();
+          }
         }
       }
-    }
-  });
+    });
 
-  if (hasNewOtherMsg && chatConfigCache?.sound_notifications) {
-    playChatNotificationSound();
+    if (hasNewOtherMsg && chatConfigCache?.sound_notifications) {
+      playChatNotificationSound();
+    }
   }
 
   if (msgs.length === 0) {
@@ -2701,7 +2723,7 @@ function renderChatMessages(msgs, forceScroll = false) {
       if (!knownTriggeredBuzzIds.has(m.id)) {
         knownTriggeredBuzzIds.add(m.id);
         if (!m.is_mine) {
-          triggerBuzzEffect(bType, false);
+          triggerBuzzEffect(bType, false, m.sender_id);
         }
       }
     } else {

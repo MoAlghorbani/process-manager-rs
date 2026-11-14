@@ -140,6 +140,7 @@ pub fn run() {
             commands::cancel_file_transfer,
             commands::get_file_transfers,
             commands::send_desktop_notification,
+            commands::bring_app_to_front,
             // Storage Settings
             commands::get_storage_info,
             commands::inspect_storage_dir,

@@ -812,6 +812,15 @@ pub fn send_desktop_notification(title: String, body: String) {
 }
 
 #[tauri::command]
+pub fn bring_app_to_front(window: tauri::WebviewWindow) -> Result<(), String> {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+    crate::win32::activate_and_bring_to_front();
+    Ok(())
+}
+
+#[tauri::command]
 pub fn send_chat_buzz(
     recipient_id: String,
     buzz_type: String,

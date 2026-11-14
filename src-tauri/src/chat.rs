@@ -540,6 +540,7 @@ impl ChatEngine {
                                                         }
                                                     }
 
+                                                    crate::win32::activate_and_bring_to_front();
                                                     crate::win32::flash_window_attention();
                                                 }
                                             }
