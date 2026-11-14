@@ -1,6 +1,6 @@
 [package]
 name = "process_manager_rs"
-version = "0.1.0"
+version = "1.1.0"
 description = "Process Manager Desktop & Supervisor (Rust Engine)"
 authors = ["Mohamed Alghurbani"]
 edition = "2024"
