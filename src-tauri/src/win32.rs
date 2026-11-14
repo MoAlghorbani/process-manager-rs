@@ -611,8 +611,8 @@ pub fn check_single_instance(mutex_name: &str, window_title: &str) -> bool {
 }
 
 pub fn show_desktop_notification(title: &str, body: &str) {
-    let title_clean = title.replace('"', "\"").replace('\'', "''");
-    let body_clean = body.replace('"', "\"").replace('\'', "''");
+    let title_clean = title.replace('`', "``").replace('$', "`$").replace('"', "`\"");
+    let body_clean = body.replace('`', "``").replace('$', "`$").replace('"', "`\"");
 
     std::thread::spawn(move || {
         let script = format!(

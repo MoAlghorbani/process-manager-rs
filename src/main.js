@@ -341,6 +341,13 @@ function setupServices() {
     pollServices();
   });
 
+  document.getElementById("input-service-cmd")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      document.getElementById("btn-save-service")?.click();
+    }
+  });
+
   // Manage Groups Modal
   const modalGroups = document.getElementById("modal-groups");
   document.getElementById("btn-manage-groups").addEventListener("click", () => {

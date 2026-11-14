@@ -318,7 +318,8 @@ body {
 input[type="text"],
 input[type="number"],
 input[type="password"],
-select {
+select,
+textarea {
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -331,9 +332,22 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: var(--border-focus);
   box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2);
+}
+
+.form-textarea-cmd {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 84px;
+  max-height: 240px;
+  resize: vertical;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace) !important;
+  font-size: 12.5px !important;
+  line-height: 1.5;
+  padding: 8px 10px;
 }
 
 .checkbox-label {

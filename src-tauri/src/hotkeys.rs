@@ -287,9 +287,47 @@ unsafe extern "system" fn low_level_keyboard_proc(
                             let jiggler = state.jiggler.clone();
                             thread::spawn(move || {
                                 if target == "__mouse_jiggler__" {
-                                    jiggler.toggle();
+                                    let active = jiggler.toggle();
+                                    let status = if active { "Started / Active" } else { "Stopped / Inactive" };
+                                    crate::win32::show_desktop_notification(
+                                        "🖱️ Mouse Jiggler",
+                                        &format!("Mouse Jiggler is now {}.", status),
+                                    );
                                 } else {
-                                    pm.toggle_service(&target);
+                                    let was_running = {
+                                        let map = pm.services.read().unwrap();
+                                        map.get(&target).map(|s| s.lock().unwrap().status == "running").unwrap_or(false)
+                                    };
+                                    let shortcut_desc = {
+                                        let map = pm.services.read().unwrap();
+                                        map.get(&target).and_then(|s| s.lock().unwrap().config.shortcut.clone()).unwrap_or_default()
+                                    };
+
+                                    let res = pm.toggle_service(&target);
+                                    if res {
+                                        let sc_suffix = if !shortcut_desc.is_empty() {
+                                            format!(" [{}]", shortcut_desc)
+                                        } else {
+                                            String::new()
+                                        };
+
+                                        if !was_running {
+                                            crate::win32::show_desktop_notification(
+                                                "🚀 Server Started",
+                                                &format!("Started '{}' via shortcut{}", target, sc_suffix),
+                                            );
+                                        } else {
+                                            crate::win32::show_desktop_notification(
+                                                "⏹️ Server Stopped",
+                                                &format!("Stopped '{}' via shortcut{}", target, sc_suffix),
+                                            );
+                                        }
+                                    } else {
+                                        crate::win32::show_desktop_notification(
+                                            "⚠️ Server Shortcut",
+                                            &format!("Failed to toggle service '{}'", target),
+                                        );
+                                    }
                                 }
                             });
                         }
