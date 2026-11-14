@@ -2168,6 +2168,7 @@ function setupLanChat() {
   btnSettings?.addEventListener("click", openChatSettingsModal);
 
   setupChatSettingsModal();
+  setupChatDragAndDrop();
 }
 
 function selectChatRecipient(recipientId, title, desc) {
@@ -2303,21 +2304,153 @@ async function handleAttachFileClick() {
   try {
     const file = await invoke("pick_file_to_send");
     if (!file) return;
+    await handleDroppedFiles([file]);
+  } catch (err) {
+    showToast(`Failed to share file: ${err}`, "error");
+  }
+}
 
+let lastDropTimestamp = 0;
+let html5DragCounter = 0;
+
+function showChatDropOverlay() {
+  const overlay = document.getElementById("chat-dropzone-overlay");
+  const targetLabel = document.getElementById("chat-dropzone-target");
+  if (overlay) {
+    if (targetLabel) {
+      const label = activeChatRecipient === "all" ? "# 🌐 General LAN" : activeChatTitle;
+      targetLabel.textContent = `to ${label}`;
+    }
+    overlay.classList.remove("hidden");
+  }
+}
+
+function hideChatDropOverlay() {
+  const overlay = document.getElementById("chat-dropzone-overlay");
+  if (overlay) {
+    overlay.classList.add("hidden");
+  }
+}
+
+function handleDroppedFilesDebounced(files) {
+  const now = Date.now();
+  if (now - lastDropTimestamp < 800) return;
+  lastDropTimestamp = now;
+  handleDroppedFiles(files);
+}
+
+async function handleDroppedFiles(files) {
+  if (!files || files.length === 0) return;
+
+  // If user dropped files while on another tab, switch to chat tab
+  if (currentTab !== "tab-chat") {
+    window.switchTab("tab-chat");
+  }
+
+  const targetLabel = activeChatRecipient === "all" ? "General LAN (#general)" : activeChatTitle;
+
+  if (files.length === 1) {
+    const file = files[0];
     const formattedSize = formatBytes(file.size);
-    const targetLabel = activeChatRecipient === "all" ? "General LAN (#general)" : activeChatTitle;
     const confirmMsg = `Share "${file.name}" (${formattedSize}) with ${targetLabel}?`;
     if (!confirm(confirmMsg)) return;
 
     showToast(`Sharing "${file.name}"...`, "info");
-    await invoke("send_file_offer", {
-      recipientId: activeChatRecipient,
-      filePath: file.path,
-    });
+    try {
+      await invoke("send_file_offer", {
+        recipientId: activeChatRecipient,
+        filePath: file.path,
+      });
+      await pollChatMessages(true);
+    } catch (err) {
+      showToast(`Failed to share file: ${err}`, "error");
+    }
+  } else {
+    const totalBytes = files.reduce((acc, f) => acc + (f.size || 0), 0);
+    const formattedTotal = formatBytes(totalBytes);
+    const fileNames = files.slice(0, 3).map((f) => f.name).join(", ") + (files.length > 3 ? ` and ${files.length - 3} more` : "");
+    const confirmMsg = `Share ${files.length} files (${formattedTotal})\n[${fileNames}]\nwith ${targetLabel}?`;
+    if (!confirm(confirmMsg)) return;
+
+    showToast(`Sharing ${files.length} files...`, "info");
+    for (const file of files) {
+      try {
+        await invoke("send_file_offer", {
+          recipientId: activeChatRecipient,
+          filePath: file.path,
+        });
+      } catch (err) {
+        showToast(`Failed to share "${file.name}": ${err}`, "error");
+      }
+    }
     await pollChatMessages(true);
-  } catch (err) {
-    showToast(`Failed to share file: ${err}`, "error");
   }
+}
+
+function setupChatDragAndDrop() {
+  // 1. Tauri native window drag & drop event listener
+  if (window.__TAURI__ && window.__TAURI__.event && window.__TAURI__.event.listen) {
+    window.__TAURI__.event.listen("file-drag-enter", () => {
+      showChatDropOverlay();
+    });
+    window.__TAURI__.event.listen("file-drag-leave", () => {
+      hideChatDropOverlay();
+    });
+    window.__TAURI__.event.listen("file-drag-drop", (event) => {
+      hideChatDropOverlay();
+      const files = event.payload;
+      if (Array.isArray(files) && files.length > 0) {
+        handleDroppedFilesDebounced(files);
+      }
+    });
+  }
+
+  // 2. HTML5 drag & drop fallback / DOM drop listener
+  window.addEventListener("dragenter", (e) => {
+    if (e.dataTransfer && e.dataTransfer.types && (e.dataTransfer.types.includes("Files") || e.dataTransfer.types.indexOf("Files") !== -1)) {
+      e.preventDefault();
+      html5DragCounter++;
+      showChatDropOverlay();
+    }
+  });
+
+  window.addEventListener("dragover", (e) => {
+    if (e.dataTransfer && e.dataTransfer.types && (e.dataTransfer.types.includes("Files") || e.dataTransfer.types.indexOf("Files") !== -1)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    }
+  });
+
+  window.addEventListener("dragleave", (e) => {
+    html5DragCounter--;
+    if (html5DragCounter <= 0) {
+      html5DragCounter = 0;
+      hideChatDropOverlay();
+    }
+  });
+
+  window.addEventListener("drop", async (e) => {
+    html5DragCounter = 0;
+    hideChatDropOverlay();
+
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      e.preventDefault();
+      const droppedList = [];
+      for (let i = 0; i < e.dataTransfer.files.length; i++) {
+        const f = e.dataTransfer.files[i];
+        if (f.path) {
+          droppedList.push({
+            path: f.path,
+            name: f.name || "file.bin",
+            size: f.size || 0,
+          });
+        }
+      }
+      if (droppedList.length > 0) {
+        handleDroppedFilesDebounced(droppedList);
+      }
+    }
+  });
 }
 
 function formatBytes(bytes) {

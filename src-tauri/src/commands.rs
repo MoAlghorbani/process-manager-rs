@@ -741,6 +741,24 @@ pub fn pick_file_to_send() -> Option<PickedFileInfo> {
 }
 
 #[tauri::command]
+pub fn get_file_info(file_path: String) -> Result<PickedFileInfo, String> {
+    let p = Path::new(&file_path);
+    if !p.is_file() {
+        return Err("Selected path is not a valid file.".to_string());
+    }
+    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file.bin".to_string());
+    Ok(PickedFileInfo {
+        path: file_path,
+        name,
+        size: meta.len(),
+    })
+}
+
+#[tauri::command]
 pub fn pick_save_file_path(default_name: String) -> Option<String> {
     let safe_name = default_name.replace('\'', "''");
     let script = format!(

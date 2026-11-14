@@ -2321,6 +2321,76 @@ textarea:focus {
   border-radius: var(--radius-md);
   overflow: hidden;
   min-width: 0;
+  position: relative;
+}
+
+/* Drag & Drop File Sharing Overlay */
+.chat-dropzone-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(5, 5, 5, 0.94);
+  border: 2px dashed #ef4444;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(4px);
+  pointer-events: none;
+  animation: fadeInDrop 0.15s ease-out;
+}
+
+.chat-dropzone-overlay.hidden {
+  display: none !important;
+}
+
+.chat-dropzone-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  padding: 28px 36px;
+  background: #0f0f0f;
+  border: 1px solid #222;
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 24px rgba(239, 68, 68, 0.2);
+}
+
+.chat-dropzone-icon {
+  font-size: 40px;
+  line-height: 1;
+  animation: bounceDrop 0.8s infinite alternate ease-in-out;
+}
+
+.chat-dropzone-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.chat-dropzone-subtitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ef4444;
+}
+
+.chat-dropzone-hint {
+  font-size: 11px;
+  color: #777;
+}
+
+@keyframes bounceDrop {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-6px); }
+}
+
+@keyframes fadeInDrop {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 .chat-active-header {

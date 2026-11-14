@@ -23,6 +23,7 @@ use crate::media::MediaServer;
 use crate::todo::TodoStore;
 use crate::ytdl::YtDlpEngine;
 use std::sync::Arc;
+use tauri::Emitter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -58,6 +59,35 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(state)
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(drag_event) = event {
+                match drag_event {
+                    tauri::DragDropEvent::Enter { paths, .. } => {
+                        let path_strs: Vec<String> = paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                        let _ = window.emit("file-drag-enter", path_strs);
+                    }
+                    tauri::DragDropEvent::Drop { paths, .. } => {
+                        let mut dropped: Vec<crate::models::PickedFileInfo> = Vec::new();
+                        for p in paths {
+                            if p.is_file() {
+                                let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+                                let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".to_string());
+                                dropped.push(crate::models::PickedFileInfo {
+                                    path: p.to_string_lossy().to_string(),
+                                    name,
+                                    size,
+                                });
+                            }
+                        }
+                        let _ = window.emit("file-drag-drop", dropped);
+                    }
+                    tauri::DragDropEvent::Leave => {
+                        let _ = window.emit("file-drag-leave", ());
+                    }
+                    _ => {}
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             // Process Supervisor
             commands::get_manager_summary,
@@ -133,6 +163,7 @@ pub fn run() {
             commands::clear_chat_history,
             // LAN File Transfers
             commands::pick_file_to_send,
+            commands::get_file_info,
             commands::pick_save_file_path,
             commands::send_file_offer,
             commands::accept_file_transfer,

@@ -604,7 +604,17 @@
           </div>
 
           <!-- Main Chat Panel -->
-          <div class="chat-main">
+          <div class="chat-main" id="chat-main-panel">
+            <!-- Drag & Drop File Overlay -->
+            <div class="chat-dropzone-overlay hidden" id="chat-dropzone-overlay">
+              <div class="chat-dropzone-box">
+                <div class="chat-dropzone-icon">🚀</div>
+                <div class="chat-dropzone-title">Drop File to Send</div>
+                <div class="chat-dropzone-subtitle" id="chat-dropzone-target">to # 🌐 General LAN</div>
+                <div class="chat-dropzone-hint">Send any file size (GB+) instantly over high-speed LAN</div>
+              </div>
+            </div>
+
             <!-- Active Conversation Header -->
             <div class="chat-active-header">
               <div class="active-convo-info">
