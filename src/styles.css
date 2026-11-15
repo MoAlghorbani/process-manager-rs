@@ -3523,3 +3523,365 @@ body.soft-buzz-active {
   color: #ffffff;
   border-color: var(--accent-red);
 }
+
+/* ======================================================== */
+/* 9. NETWORK MONITOR & USAGE TRACKER STYLES                */
+/* ======================================================== */
+
+.netmon-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.netmon-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.netmon-kpi-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.netmon-kpi-icon {
+  font-size: 24px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: #121212;
+  border: 1px solid #222;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+.netmon-kpi-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.netmon-kpi-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+}
+
+.netmon-kpi-val {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 1px 0;
+}
+
+.netmon-kpi-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Toolbar */
+.netmon-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.netmon-view-pills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.netmon-pill {
+  background: #111111;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.12s ease;
+}
+
+.netmon-pill:hover {
+  background: #1a1a1a;
+  color: var(--text-main);
+  border-color: #333;
+}
+
+.netmon-pill.active {
+  background: var(--accent-red);
+  color: #ffffff;
+  border-color: var(--accent-red);
+}
+
+.netmon-pill.active .badge-subtle {
+  background: rgba(0, 0, 0, 0.35);
+  color: #ffffff;
+}
+
+.netmon-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 220px;
+  max-width: 360px;
+}
+
+.netmon-search-input {
+  flex: 1;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.netmon-filter-select-wrap select {
+  font-size: 12px;
+  padding: 5px 8px;
+  background: #111111;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  border-radius: var(--radius-sm);
+}
+
+.netmon-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.netmon-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.netmon-content-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.netmon-view-pane {
+  display: none;
+  flex: 1;
+  height: 100%;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.netmon-view-pane.active {
+  display: flex;
+}
+
+.netmon-table-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.netmon-table th {
+  position: sticky;
+  top: 0;
+  background: #0d0d0d;
+  z-index: 2;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+.netmon-table td {
+  font-size: 12px;
+  padding: 8px 10px;
+  vertical-align: middle;
+}
+
+.netmon-loading {
+  text-align: center;
+  padding: 40px !important;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Badges for NetMon */
+.badge-proto {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  color: #ddd;
+}
+
+.badge-proto-tcp {
+  border-color: #2563eb;
+  color: #60a5fa;
+}
+
+.badge-proto-udp {
+  border-color: #d97706;
+  color: #fbbf24;
+}
+
+.badge-scope-internet {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  color: #c084fc;
+}
+
+.badge-scope-lan {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #34d399;
+}
+
+.badge-scope-local {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: #181818;
+  border: 1px solid #282828;
+  color: #888888;
+}
+
+.badge-state-est {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid #10b981;
+  color: #10b981;
+}
+
+.badge-state-listen {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid #3b82f6;
+  color: #60a5fa;
+}
+
+.badge-state-wait {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid #f59e0b;
+  color: #fbbf24;
+}
+
+.netmon-proc-name {
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.netmon-pid {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-left: 4px;
+}
+
+.netmon-domain-highlight {
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.netmon-ip-dim {
+  font-size: 10px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  margin-left: 4px;
+}
+
+.netmon-tag-pill {
+  display: inline-block;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: #161616;
+  border: 1px solid #262626;
+  color: #aaa;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin: 1px 2px;
+}
+
+.netmon-tag-pill.accent {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+}
+
+.netmon-action-btn {
+  background: #1c1c1c;
+  border: 1px solid #333;
+  color: var(--text-muted);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.netmon-action-btn:hover {
+  background: var(--accent-red);
+  color: #fff;
+  border-color: var(--accent-red);
+}

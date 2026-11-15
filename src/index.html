@@ -48,6 +48,9 @@
       <button class="nav-tab" data-tab="tab-media" id="tab-btn-media">
         <span class="tab-icon">🎬</span> Media Player
       </button>
+      <button class="nav-tab" data-tab="tab-netmon" id="tab-btn-netmon">
+        <span class="tab-icon">🌐</span> Net Monitor
+      </button>
     </nav>
 
     <div class="header-actions">
@@ -881,6 +884,194 @@
           <!-- Files List Container -->
           <div class="media-items-scroll" id="media-items-container">
             <div class="media-empty-list">No media loaded. Choose a folder above to scan sub-files.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================== -->
+    <!-- 9. TAB: NETWORK MONITOR & USAGE TRACKER       -->
+    <!-- ============================================== -->
+    <section id="tab-netmon" class="tab-pane">
+      <div class="netmon-container">
+        <!-- Live Telemetry KPI Cards -->
+        <div class="netmon-kpi-grid">
+          <div class="netmon-kpi-card">
+            <div class="netmon-kpi-icon icon-down">⬇️</div>
+            <div class="netmon-kpi-body">
+              <span class="netmon-kpi-label">DOWNLOAD RATE</span>
+              <span class="netmon-kpi-val" id="netmon-stat-download">0 B/s</span>
+              <span class="netmon-kpi-sub">Session: <span id="netmon-stat-total-down">0 B</span></span>
+            </div>
+          </div>
+
+          <div class="netmon-kpi-card">
+            <div class="netmon-kpi-icon icon-up">⬆️</div>
+            <div class="netmon-kpi-body">
+              <span class="netmon-kpi-label">UPLOAD RATE</span>
+              <span class="netmon-kpi-val" id="netmon-stat-upload">0 B/s</span>
+              <span class="netmon-kpi-sub">Session: <span id="netmon-stat-total-up">0 B</span></span>
+            </div>
+          </div>
+
+          <div class="netmon-kpi-card">
+            <div class="netmon-kpi-icon icon-conns">🔌</div>
+            <div class="netmon-kpi-body">
+              <span class="netmon-kpi-label">ACTIVE CONNECTIONS</span>
+              <span class="netmon-kpi-val" id="netmon-stat-total-conns">0</span>
+              <span class="netmon-kpi-sub"><span id="netmon-stat-established">0</span> Established • <span id="netmon-stat-listening">0</span> Listening</span>
+            </div>
+          </div>
+
+          <div class="netmon-kpi-card">
+            <div class="netmon-kpi-icon icon-domains">🌍</div>
+            <div class="netmon-kpi-body">
+              <span class="netmon-kpi-label">REMOTE HOSTS &amp; APPS</span>
+              <span class="netmon-kpi-val"><span id="netmon-stat-domains-count">0</span> Hosts</span>
+              <span class="netmon-kpi-sub"><span id="netmon-stat-apps-count">0</span> Apps • <span id="netmon-stat-interfaces">0</span> Adapters</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controls & Sub-view Bar -->
+        <div class="netmon-toolbar">
+          <!-- View Switcher Pills -->
+          <div class="netmon-view-pills">
+            <button class="netmon-pill active" data-view="connections" id="btn-netmon-view-connections">
+              <span>📡 All Sockets</span>
+              <span class="badge badge-subtle" id="badge-count-connections">0</span>
+            </button>
+            <button class="netmon-pill" data-view="apps" id="btn-netmon-view-apps">
+              <span>📦 Applications</span>
+              <span class="badge badge-subtle" id="badge-count-apps">0</span>
+            </button>
+            <button class="netmon-pill" data-view="services" id="btn-netmon-view-services">
+              <span>⚡ Services</span>
+              <span class="badge badge-subtle" id="badge-count-services">0</span>
+            </button>
+            <button class="netmon-pill" data-view="domains" id="btn-netmon-view-domains">
+              <span>🌐 Domains &amp; Hosts</span>
+              <span class="badge badge-subtle" id="badge-count-domains">0</span>
+            </button>
+          </div>
+
+          <!-- Search Filter -->
+          <div class="netmon-search-wrap">
+            <input type="text" id="input-search-netmon" placeholder="🔍 Filter app, PID, domain, IP, port, service..." class="form-input netmon-search-input" />
+            <button class="btn btn-secondary btn-sm" id="btn-clear-netmon-search" title="Clear Search">✕</button>
+          </div>
+
+          <!-- Filter Category Dropdown -->
+          <div class="netmon-filter-select-wrap">
+            <select id="select-netmon-filter" class="form-input form-select-sm">
+              <option value="all">Filter: All Sockets</option>
+              <option value="established">Established Only</option>
+              <option value="listening">Listening Only</option>
+              <option value="internet">External / Internet Only</option>
+              <option value="lan">LAN Only</option>
+              <option value="services">Supervised Services Only</option>
+            </select>
+          </div>
+
+          <!-- Auto-Refresh & Actions -->
+          <div class="netmon-actions">
+            <label class="netmon-checkbox-label" title="Automatically update network telemetry">
+              <input type="checkbox" id="chk-netmon-autorefresh" checked />
+              <span>Auto (2s)</span>
+            </label>
+            <button class="btn btn-secondary btn-sm" id="btn-netmon-refresh" title="Manually refresh network snapshot">
+              <span>🔄 Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Main Display Views Container -->
+        <div class="netmon-content-area">
+          <!-- View 1: All Connections Table -->
+          <div class="netmon-view-pane active" id="pane-netmon-connections">
+            <div class="table-container netmon-table-scroll">
+              <table class="services-table netmon-table">
+                <thead>
+                  <tr>
+                    <th style="width: 70px;">PROTO</th>
+                    <th style="width: 170px;">APPLICATION / PID</th>
+                    <th style="width: 160px;">SUPERVISED SERVICE</th>
+                    <th style="width: 170px;">LOCAL ADDRESS</th>
+                    <th>REMOTE ENDPOINT / DOMAIN</th>
+                    <th style="width: 120px;">STATE</th>
+                    <th style="width: 90px;">SCOPE</th>
+                    <th style="width: 90px; text-align: right;">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-netmon-connections">
+                  <tr><td colspan="8" class="netmon-loading">Loading network connections...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- View 2: Applications Summary -->
+          <div class="netmon-view-pane" id="pane-netmon-apps">
+            <div class="table-container netmon-table-scroll">
+              <table class="services-table netmon-table">
+                <thead>
+                  <tr>
+                    <th style="width: 220px;">APPLICATION</th>
+                    <th style="width: 110px;">ACTIVE PIDs</th>
+                    <th style="width: 120px;">TOTAL CONNS</th>
+                    <th style="width: 130px;">ESTABLISHED</th>
+                    <th style="width: 120px;">LISTENING</th>
+                    <th style="width: 160px;">MANAGED SERVICE</th>
+                    <th>CONNECTED DOMAINS &amp; HOSTS</th>
+                    <th style="width: 90px; text-align: right;">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-netmon-apps">
+                  <tr><td colspan="8" class="netmon-loading">Loading application network usage...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- View 3: Supervised Services Summary -->
+          <div class="netmon-view-pane" id="pane-netmon-services">
+            <div class="table-container netmon-table-scroll">
+              <table class="services-table netmon-table">
+                <thead>
+                  <tr>
+                    <th style="width: 200px;">SERVICE NAME</th>
+                    <th style="width: 110px;">STATUS</th>
+                    <th style="width: 90px;">PID</th>
+                    <th style="width: 160px;">LISTENING PORTS</th>
+                    <th style="width: 160px;">OUTBOUND CONNECTIONS</th>
+                    <th>CONNECTED REMOTE DOMAINS</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-netmon-services">
+                  <tr><td colspan="6" class="netmon-loading">Scanning supervised services network activity...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- View 4: Domains & Endpoints Summary -->
+          <div class="netmon-view-pane" id="pane-netmon-domains">
+            <div class="table-container netmon-table-scroll">
+              <table class="services-table netmon-table">
+                <thead>
+                  <tr>
+                    <th style="width: 260px;">DOMAIN / REMOTE HOST</th>
+                    <th style="width: 130px;">TOTAL CONNS</th>
+                    <th style="width: 220px;">REMOTE IP ADDRESSES</th>
+                    <th style="width: 160px;">REMOTE PORTS</th>
+                    <th>APPLICATIONS ACCESSING</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-netmon-domains">
+                  <tr><td colspan="5" class="netmon-loading">Analyzing remote domains and endpoints...</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>

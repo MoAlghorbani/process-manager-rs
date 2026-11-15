@@ -26,6 +26,7 @@ pub struct AppState {
     pub chat_engine: Arc<ChatEngine>,
     pub hotkey_mgr: Arc<crate::hotkeys::HotkeyManager>,
     pub media_server: Arc<crate::media::MediaServer>,
+    pub netmon: Arc<crate::netmon::NetworkMonitorEngine>,
 }
 
 // ==========================================
@@ -874,4 +875,13 @@ pub fn get_saved_media_workspace() -> Option<String> {
 #[tauri::command]
 pub fn save_media_workspace(path: String) -> Result<(), String> {
     crate::media::save_media_folder(&path)
+}
+
+// ==========================================
+// 9. Network Activity & Usage Monitor Commands
+// ==========================================
+
+#[tauri::command]
+pub fn get_network_snapshot(state: State<'_, AppState>) -> crate::netmon::NetworkMonitorSnapshot {
+    state.netmon.get_snapshot()
 }

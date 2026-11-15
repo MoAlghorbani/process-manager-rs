@@ -8,6 +8,7 @@ pub mod jiggler;
 pub mod manager;
 pub mod media;
 pub mod models;
+pub mod netmon;
 pub mod todo;
 pub mod win32;
 pub mod ytdl;
@@ -20,6 +21,7 @@ use crate::hotkeys::HotkeyManager;
 use crate::jiggler::JigglerEngine;
 use crate::manager::ProcessManager;
 use crate::media::MediaServer;
+use crate::netmon::NetworkMonitorEngine;
 use crate::todo::TodoStore;
 use crate::ytdl::YtDlpEngine;
 use std::sync::Arc;
@@ -36,6 +38,7 @@ pub fn run() {
     let chat_engine = Arc::new(ChatEngine::new());
     let hotkey_mgr = Arc::new(HotkeyManager::new(pm.clone(), jiggler.clone()));
     let media_server = Arc::new(MediaServer::new());
+    let netmon = Arc::new(NetworkMonitorEngine::new(pm.clone()));
 
     // Start background watchers & hotkey listener
     clipboard_watcher.start();
@@ -43,6 +46,7 @@ pub fn run() {
     chat_engine.start();
     hotkey_mgr.start();
     media_server.start();
+    netmon.start();
 
     let state = AppState {
         pm: pm.clone(),
@@ -54,6 +58,7 @@ pub fn run() {
         chat_engine: chat_engine.clone(),
         hotkey_mgr: hotkey_mgr.clone(),
         media_server: media_server.clone(),
+        netmon: netmon.clone(),
     };
 
     tauri::Builder::default()
@@ -183,6 +188,8 @@ pub fn run() {
             commands::scan_media_workspace,
             commands::get_saved_media_workspace,
             commands::save_media_workspace,
+            // Network Activity Monitor
+            commands::get_network_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Process Manager application");

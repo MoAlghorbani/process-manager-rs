@@ -38,6 +38,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupStorageManager();
   setupLanChat();
   setupMedia();
+  setupNetMon();
 
   // Background Telemetry Tickers
   setInterval(pollServices, 1500);
@@ -46,6 +47,14 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(pollDownloader, 1000);
   setInterval(pollChatMessages, 1200);
   setInterval(pollChatPeers, 3000);
+  setInterval(() => {
+    if (currentTab === "tab-netmon") {
+      const chk = document.getElementById("chk-netmon-autorefresh");
+      if (!chk || chk.checked) {
+        pollNetMon();
+      }
+    }
+  }, 2000);
   setInterval(() => {
     if (currentTab === "tab-ports") {
       const chk = document.getElementById("chk-auto-refresh-ports");
@@ -105,6 +114,8 @@ function setupNavigation() {
         pollChatMessages(true);
       } else if (currentTab === "tab-media") {
         loadMediaTab();
+      } else if (currentTab === "tab-netmon") {
+        loadNetMonTab();
       }
     });
   });
@@ -3644,3 +3655,409 @@ function playPrevMedia() {
 window.playMediaItem = playMediaItem;
 window.browseAndSelectMediaWorkspace = browseAndSelectMediaWorkspace;
 window.scanMediaWorkspace = scanMediaWorkspace;
+
+// ========================================================
+// 12. NETWORK MONITOR & USAGE TRACKER
+// ========================================================
+
+let netmonSnapshotCache = null;
+let netmonCurrentSubView = "connections"; // "connections", "apps", "services", "domains"
+let netmonSearchFilter = "";
+let netmonCategoryFilter = "all";
+let isNetmonLoading = false;
+
+function setupNetMon() {
+  // Sub-view switcher pills
+  document.querySelectorAll(".netmon-pill").forEach((pill) => {
+    pill.addEventListener("click", () => {
+      document.querySelectorAll(".netmon-pill").forEach((p) => p.classList.remove("active"));
+      document.querySelectorAll(".netmon-view-pane").forEach((pane) => pane.classList.remove("active"));
+
+      pill.classList.add("active");
+      netmonCurrentSubView = pill.getAttribute("data-view");
+      const targetPane = document.getElementById(`pane-netmon-${netmonCurrentSubView}`);
+      if (targetPane) targetPane.classList.add("active");
+
+      renderNetMonCurrentView();
+    });
+  });
+
+  // Search input
+  const inputSearch = document.getElementById("input-search-netmon");
+  const btnClearSearch = document.getElementById("btn-clear-netmon-search");
+  let searchDebounce = null;
+
+  inputSearch?.addEventListener("input", (e) => {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => {
+      netmonSearchFilter = e.target.value.trim().toLowerCase();
+      renderNetMonCurrentView();
+    }, 150);
+  });
+
+  btnClearSearch?.addEventListener("click", () => {
+    if (inputSearch) inputSearch.value = "";
+    netmonSearchFilter = "";
+    renderNetMonCurrentView();
+  });
+
+  // Filter category select
+  const selectFilter = document.getElementById("select-netmon-filter");
+  selectFilter?.addEventListener("change", (e) => {
+    netmonCategoryFilter = e.target.value;
+    renderNetMonCurrentView();
+  });
+
+  // Manual refresh button
+  document.getElementById("btn-netmon-refresh")?.addEventListener("click", () => {
+    pollNetMon(true);
+  });
+}
+
+async function loadNetMonTab() {
+  await pollNetMon(true);
+}
+
+async function pollNetMon(force = false) {
+  if (currentTab !== "tab-netmon" && !force) return;
+  if (isNetmonLoading) return;
+
+  isNetmonLoading = true;
+  try {
+    const snapshot = await invoke("get_network_snapshot");
+    if (snapshot) {
+      netmonSnapshotCache = snapshot;
+      updateNetMonStats(snapshot);
+      renderNetMonCurrentView();
+    }
+  } catch (err) {
+    console.error("Failed to fetch network snapshot:", err);
+  } finally {
+    isNetmonLoading = false;
+  }
+}
+
+function updateNetMonStats(snapshot) {
+  if (!snapshot) return;
+
+  // Throughput Cards
+  const elDown = document.getElementById("netmon-stat-download");
+  const elUp = document.getElementById("netmon-stat-upload");
+  const elTotDown = document.getElementById("netmon-stat-total-down");
+  const elTotUp = document.getElementById("netmon-stat-total-up");
+
+  if (elDown) elDown.textContent = `${formatBytes(snapshot.throughput.download_bytes_per_sec)}/s`;
+  if (elUp) elUp.textContent = `${formatBytes(snapshot.throughput.upload_bytes_per_sec)}/s`;
+  if (elTotDown) elTotDown.textContent = formatBytes(snapshot.throughput.total_session_download);
+  if (elTotUp) elTotUp.textContent = formatBytes(snapshot.throughput.total_session_upload);
+
+  // Connection KPIs
+  const elTotalConns = document.getElementById("netmon-stat-total-conns");
+  const elEst = document.getElementById("netmon-stat-established");
+  const elListen = document.getElementById("netmon-stat-listening");
+
+  if (elTotalConns) elTotalConns.textContent = snapshot.connections.length;
+  if (elEst) elEst.textContent = snapshot.total_established;
+  if (elListen) elListen.textContent = snapshot.total_listening;
+
+  // Host & App KPIs
+  const elDomains = document.getElementById("netmon-stat-domains-count");
+  const elApps = document.getElementById("netmon-stat-apps-count");
+  const elIfs = document.getElementById("netmon-stat-interfaces");
+
+  if (elDomains) elDomains.textContent = snapshot.total_remote_hosts;
+  if (elApps) elApps.textContent = snapshot.apps_summary.length;
+  if (elIfs) elIfs.textContent = snapshot.throughput.active_interfaces_count;
+
+  // Badges on Pills
+  const bConns = document.getElementById("badge-count-connections");
+  const bApps = document.getElementById("badge-count-apps");
+  const bServices = document.getElementById("badge-count-services");
+  const bDomains = document.getElementById("badge-count-domains");
+
+  if (bConns) bConns.textContent = snapshot.connections.length;
+  if (bApps) bApps.textContent = snapshot.apps_summary.length;
+  if (bServices) bServices.textContent = snapshot.services_summary.length;
+  if (bDomains) bDomains.textContent = snapshot.domains_summary.length;
+}
+
+function renderNetMonCurrentView() {
+  if (!netmonSnapshotCache) return;
+
+  if (netmonCurrentSubView === "connections") {
+    renderNetMonConnections(netmonSnapshotCache.connections);
+  } else if (netmonCurrentSubView === "apps") {
+    renderNetMonApps(netmonSnapshotCache.apps_summary);
+  } else if (netmonCurrentSubView === "services") {
+    renderNetMonServices(netmonSnapshotCache.services_summary);
+  } else if (netmonCurrentSubView === "domains") {
+    renderNetMonDomains(netmonSnapshotCache.domains_summary);
+  }
+}
+
+function renderNetMonConnections(conns) {
+  const tbody = document.getElementById("tbody-netmon-connections");
+  if (!tbody) return;
+
+  const q = netmonSearchFilter;
+  const cat = netmonCategoryFilter;
+
+  const filtered = conns.filter((c) => {
+    // Category Filter
+    if (cat === "established" && c.state !== "ESTABLISHED") return false;
+    if (cat === "listening" && c.state !== "LISTENING") return false;
+    if (cat === "internet" && c.category !== "Internet") return false;
+    if (cat === "lan" && c.category !== "LAN") return false;
+    if (cat === "services" && !c.service_name) return false;
+
+    // Search Query
+    if (q) {
+      const matchProc = c.process_name.toLowerCase().includes(q);
+      const matchPid = String(c.pid).includes(q);
+      const matchLocal = c.local_addr.toLowerCase().includes(q);
+      const matchRemote = c.remote_addr.toLowerCase().includes(q);
+      const matchDomain = c.remote_domain.toLowerCase().includes(q);
+      const matchState = c.state.toLowerCase().includes(q);
+      const matchProto = c.protocol.toLowerCase().includes(q);
+      const matchService = c.service_name ? c.service_name.toLowerCase().includes(q) : false;
+
+      return matchProc || matchPid || matchLocal || matchRemote || matchDomain || matchState || matchProto || matchService;
+    }
+
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" class="netmon-loading">${q || cat !== "all" ? "No network sockets match current filter." : "No active network sockets detected."}</td></tr>`;
+    return;
+  }
+
+  // Cap at 250 rows for snappy DOM rendering
+  const displayList = filtered.slice(0, 250);
+
+  let html = "";
+  displayList.forEach((c) => {
+    const isTcp = c.protocol.startsWith("TCP");
+    const protoClass = isTcp ? "badge-proto-tcp" : "badge-proto-udp";
+
+    let stateClass = "badge-state-wait";
+    if (c.state === "ESTABLISHED") stateClass = "badge-state-est";
+    else if (c.state === "LISTENING") stateClass = "badge-state-listen";
+
+    let scopeClass = "badge-scope-local";
+    if (c.category === "Internet") scopeClass = "badge-scope-internet";
+    else if (c.category === "LAN") scopeClass = "badge-scope-lan";
+
+    const serviceBadge = c.service_name
+      ? `<span class="badge badge-emerald" title="Supervised Process Manager Service">${escapeHtml(c.service_name)}</span>`
+      : `<span style="color: var(--text-dim);">-</span>`;
+
+    const remoteDisplay = c.state === "LISTENING" || c.remote_addr === "*:*"
+      ? `<span style="color: var(--text-dim);">*:* (Listening)</span>`
+      : (c.remote_domain && c.remote_domain !== c.remote_ip
+          ? `<span class="netmon-domain-highlight">${escapeHtml(c.remote_domain)}</span> <span class="netmon-ip-dim">(${escapeHtml(c.remote_addr)})</span>`
+          : `<span class="netmon-domain-highlight">${escapeHtml(c.remote_addr)}</span>`);
+
+    html += `
+      <tr>
+        <td><span class="badge-proto ${protoClass}">${escapeHtml(c.protocol)}</span></td>
+        <td>
+          <span class="netmon-proc-name">${escapeHtml(c.process_name)}</span>
+          <span class="netmon-pid">[${c.pid}]</span>
+        </td>
+        <td>${serviceBadge}</td>
+        <td><code class="font-mono" style="font-size: 11px;">${escapeHtml(c.local_addr)}</code></td>
+        <td>${remoteDisplay}</td>
+        <td><span class="${stateClass}">${escapeHtml(c.state)}</span></td>
+        <td><span class="${scopeClass}">${escapeHtml(c.category)}</span></td>
+        <td style="text-align: right;">
+          ${c.pid > 4 ? `
+            <button class="netmon-action-btn" onclick="killProcessFromNetMon(${c.pid}, '${escapeHtml(c.process_name)}')" title="Terminate Process PID ${c.pid}">⚡ Kill</button>
+          ` : `<span style="color: var(--text-dim); font-size: 10px;">OS</span>`}
+        </td>
+      </tr>
+    `;
+  });
+
+  if (filtered.length > 250) {
+    html += `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 10px; font-size: 11px;">Showing first 250 sockets (${filtered.length - 250} more filtered). Use search bar to narrow results.</td></tr>`;
+  }
+
+  tbody.innerHTML = html;
+}
+
+function renderNetMonApps(apps) {
+  const tbody = document.getElementById("tbody-netmon-apps");
+  if (!tbody) return;
+
+  const q = netmonSearchFilter;
+  const filtered = apps.filter((a) => {
+    if (!q) return true;
+    const matchName = a.process_name.toLowerCase().includes(q);
+    const matchService = a.service_name ? a.service_name.toLowerCase().includes(q) : false;
+    const matchDomains = a.remote_domains.some((d) => d.toLowerCase().includes(q));
+    const matchPids = a.pids.some((p) => String(p).includes(q));
+    return matchName || matchService || matchDomains || matchPids;
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" class="netmon-loading">${q ? "No applications match search filter." : "No active applications with network sockets."}</td></tr>`;
+    return;
+  }
+
+  let html = "";
+  filtered.forEach((a) => {
+    const serviceBadge = a.service_name
+      ? `<span class="badge badge-emerald">${escapeHtml(a.service_name)}</span>`
+      : `<span style="color: var(--text-dim);">-</span>`;
+
+    const pidsDisplay = a.pids.slice(0, 3).map((p) => `<span class="netmon-tag-pill">${p}</span>`).join(" ") +
+      (a.pids.length > 3 ? ` <span class="netmon-tag-pill">+${a.pids.length - 3}</span>` : "");
+
+    const domainsDisplay = a.remote_domains.length > 0
+      ? a.remote_domains.slice(0, 6).map((d) => `<span class="netmon-tag-pill accent">${escapeHtml(d)}</span>`).join(" ") +
+        (a.remote_domains.length > 6 ? ` <span class="netmon-tag-pill">+${a.remote_domains.length - 6} more</span>` : "")
+      : `<span style="color: var(--text-dim); font-size: 11px;">Local Only</span>`;
+
+    const firstPid = a.pids.length > 0 ? a.pids[0] : 0;
+
+    html += `
+      <tr>
+        <td><strong class="netmon-proc-name">${escapeHtml(a.process_name)}</strong></td>
+        <td>${pidsDisplay}</td>
+        <td><strong style="color: var(--text-main); font-family: var(--font-mono);">${a.total_connections}</strong></td>
+        <td><span class="badge-state-est">${a.established_count}</span></td>
+        <td><span class="badge-state-listen">${a.listening_count}</span></td>
+        <td>${serviceBadge}</td>
+        <td>${domainsDisplay}</td>
+        <td style="text-align: right;">
+          ${firstPid > 4 ? `
+            <button class="netmon-action-btn" onclick="killProcessFromNetMon(${firstPid}, '${escapeHtml(a.process_name)}')" title="Terminate ${escapeHtml(a.process_name)}">⚡ Kill</button>
+          ` : `<span style="color: var(--text-dim); font-size: 10px;">OS</span>`}
+        </td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+}
+
+function renderNetMonServices(services) {
+  const tbody = document.getElementById("tbody-netmon-services");
+  if (!tbody) return;
+
+  const q = netmonSearchFilter;
+  const filtered = services.filter((s) => {
+    if (!q) return true;
+    const matchName = s.service_name.toLowerCase().includes(q);
+    const matchStatus = s.status.toLowerCase().includes(q);
+    const matchPorts = s.listening_ports.some((p) => String(p).includes(q));
+    const matchDomains = s.remote_domains.some((d) => d.toLowerCase().includes(q));
+    return matchName || matchStatus || matchPorts || matchDomains;
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="netmon-loading">${q ? "No services match search filter." : "No supervised services registered in Process Manager."}</td></tr>`;
+    return;
+  }
+
+  let html = "";
+  filtered.forEach((s) => {
+    const isRunning = s.status === "RUNNING";
+    const statusBadge = isRunning
+      ? `<span class="badge badge-emerald">RUNNING</span>`
+      : `<span class="badge badge-subtle">STOPPED</span>`;
+
+    const portsDisplay = s.listening_ports.length > 0
+      ? s.listening_ports.map((p) => `<span class="netmon-tag-pill accent">:${p}</span>`).join(" ")
+      : `<span style="color: var(--text-dim); font-size: 11px;">None</span>`;
+
+    const domainsDisplay = s.remote_domains.length > 0
+      ? s.remote_domains.map((d) => `<span class="netmon-tag-pill">${escapeHtml(d)}</span>`).join(" ")
+      : `<span style="color: var(--text-dim); font-size: 11px;">None</span>`;
+
+    html += `
+      <tr>
+        <td><strong>${escapeHtml(s.service_name)}</strong></td>
+        <td>${statusBadge}</td>
+        <td><code class="font-mono">${s.pid ? s.pid : "-"}</code></td>
+        <td>${portsDisplay}</td>
+        <td><strong style="color: var(--text-main); font-family: var(--font-mono);">${s.active_connections}</strong></td>
+        <td>${domainsDisplay}</td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+}
+
+function renderNetMonDomains(domains) {
+  const tbody = document.getElementById("tbody-netmon-domains");
+  if (!tbody) return;
+
+  const q = netmonSearchFilter;
+  const filtered = domains.filter((d) => {
+    if (!q) return true;
+    const matchDomain = d.domain.toLowerCase().includes(q);
+    const matchIps = d.ips.some((ip) => ip.toLowerCase().includes(q));
+    const matchApps = d.apps.some((a) => a.toLowerCase().includes(q));
+    const matchPorts = d.ports.some((p) => String(p).includes(q));
+    return matchDomain || matchIps || matchApps || matchPorts;
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="netmon-loading">${q ? "No remote hosts match search filter." : "No active outbound remote connections."}</td></tr>`;
+    return;
+  }
+
+  let html = "";
+  filtered.forEach((d) => {
+    const ipsDisplay = d.ips.slice(0, 3).map((ip) => `<span class="netmon-tag-pill">${escapeHtml(ip)}</span>`).join(" ") +
+      (d.ips.length > 3 ? ` <span class="netmon-tag-pill">+${d.ips.length - 3}</span>` : "");
+
+    const portsDisplay = d.ports.slice(0, 4).map((p) => `<span class="netmon-tag-pill accent">:${p}</span>`).join(" ") +
+      (d.ports.length > 4 ? ` <span class="netmon-tag-pill">+${d.ports.length - 4}</span>` : "");
+
+    const appsDisplay = d.apps.slice(0, 4).map((a) => `<span class="netmon-tag-pill">${escapeHtml(a)}</span>`).join(" ") +
+      (d.apps.length > 4 ? ` <span class="netmon-tag-pill">+${d.apps.length - 4}</span>` : "");
+
+    html += `
+      <tr>
+        <td><strong class="netmon-domain-highlight">${escapeHtml(d.domain)}</strong></td>
+        <td><strong style="color: var(--text-main); font-family: var(--font-mono);">${d.total_connections}</strong></td>
+        <td>${ipsDisplay}</td>
+        <td>${portsDisplay}</td>
+        <td>${appsDisplay}</td>
+      </tr>
+    `;
+  });
+
+  tbody.innerHTML = html;
+}
+
+async function killProcessFromNetMon(pid, procName) {
+  if (!pid || pid <= 4) {
+    showToast("System processes cannot be terminated.", "warning");
+    return;
+  }
+
+  if (!confirm(`Are you sure you want to terminate process "${procName}" (PID: ${pid})?`)) {
+    return;
+  }
+
+  try {
+    const success = await invoke("kill_process_by_pid", { pid });
+    if (success) {
+      showToast(`Terminated ${procName} [PID ${pid}]`, "success");
+      await pollNetMon(true);
+    } else {
+      showToast(`Failed to terminate PID ${pid}. May require elevated permissions.`, "error");
+    }
+  } catch (err) {
+    showToast(`Error killing process: ${err}`, "error");
+  }
+}
+
+window.killProcessFromNetMon = killProcessFromNetMon;
+window.loadNetMonTab = loadNetMonTab;
+window.pollNetMon = pollNetMon;
