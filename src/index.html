@@ -926,9 +926,9 @@
           <div class="netmon-kpi-card">
             <div class="netmon-kpi-icon icon-domains">🌍</div>
             <div class="netmon-kpi-body">
-              <span class="netmon-kpi-label">REMOTE HOSTS &amp; APPS</span>
+              <span class="netmon-kpi-label">REMOTE HOSTS &amp; TOP USAGE</span>
               <span class="netmon-kpi-val"><span id="netmon-stat-domains-count">0</span> Hosts</span>
-              <span class="netmon-kpi-sub"><span id="netmon-stat-apps-count">0</span> Apps • <span id="netmon-stat-interfaces">0</span> Adapters</span>
+              <span class="netmon-kpi-sub"><span id="netmon-stat-apps-count">0</span> Apps • <span id="netmon-stat-top-consumer">Top: -</span></span>
             </div>
           </div>
         </div>
@@ -995,16 +995,17 @@
                   <tr>
                     <th style="width: 70px;">PROTO</th>
                     <th style="width: 170px;">APPLICATION / PID</th>
-                    <th style="width: 160px;">SUPERVISED SERVICE</th>
+                    <th style="width: 140px;">APP SPEED (↓ / ↑)</th>
+                    <th style="width: 150px;">SUPERVISED SERVICE</th>
                     <th style="width: 170px;">LOCAL ADDRESS</th>
                     <th>REMOTE ENDPOINT / DOMAIN</th>
-                    <th style="width: 120px;">STATE</th>
-                    <th style="width: 90px;">SCOPE</th>
-                    <th style="width: 90px; text-align: right;">ACTION</th>
+                    <th style="width: 110px;">STATE</th>
+                    <th style="width: 80px;">SCOPE</th>
+                    <th style="width: 80px; text-align: right;">ACTION</th>
                   </tr>
                 </thead>
                 <tbody id="tbody-netmon-connections">
-                  <tr><td colspan="8" class="netmon-loading">Loading network connections...</td></tr>
+                  <tr><td colspan="9" class="netmon-loading">Loading network connections...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1016,14 +1017,14 @@
               <table class="services-table netmon-table">
                 <thead>
                   <tr>
-                    <th style="width: 220px;">APPLICATION</th>
-                    <th style="width: 110px;">ACTIVE PIDs</th>
-                    <th style="width: 120px;">TOTAL CONNS</th>
-                    <th style="width: 130px;">ESTABLISHED</th>
-                    <th style="width: 120px;">LISTENING</th>
-                    <th style="width: 160px;">MANAGED SERVICE</th>
+                    <th style="width: 180px;">APPLICATION</th>
+                    <th style="width: 90px;">ACTIVE PIDs</th>
+                    <th style="width: 170px;">LIVE SPEED (↓ / ↑)</th>
+                    <th style="width: 170px;">TOTAL USAGE (↓ / ↑)</th>
+                    <th style="width: 110px;">CONNS (EST/LIS)</th>
+                    <th style="width: 140px;">MANAGED SERVICE</th>
                     <th>CONNECTED DOMAINS &amp; HOSTS</th>
-                    <th style="width: 90px; text-align: right;">ACTION</th>
+                    <th style="width: 80px; text-align: right;">ACTION</th>
                   </tr>
                 </thead>
                 <tbody id="tbody-netmon-apps">
@@ -1039,16 +1040,18 @@
               <table class="services-table netmon-table">
                 <thead>
                   <tr>
-                    <th style="width: 200px;">SERVICE NAME</th>
-                    <th style="width: 110px;">STATUS</th>
-                    <th style="width: 90px;">PID</th>
-                    <th style="width: 160px;">LISTENING PORTS</th>
-                    <th style="width: 160px;">OUTBOUND CONNECTIONS</th>
+                    <th style="width: 180px;">SERVICE NAME</th>
+                    <th style="width: 100px;">STATUS</th>
+                    <th style="width: 80px;">PID</th>
+                    <th style="width: 160px;">LIVE SPEED (↓ / ↑)</th>
+                    <th style="width: 160px;">TOTAL USAGE (↓ / ↑)</th>
+                    <th style="width: 140px;">LISTENING PORTS</th>
+                    <th style="width: 120px;">OUTBOUND CONNS</th>
                     <th>CONNECTED REMOTE DOMAINS</th>
                   </tr>
                 </thead>
                 <tbody id="tbody-netmon-services">
-                  <tr><td colspan="6" class="netmon-loading">Scanning supervised services network activity...</td></tr>
+                  <tr><td colspan="8" class="netmon-loading">Scanning supervised services network activity...</td></tr>
                 </tbody>
               </table>
             </div>

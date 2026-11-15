@@ -3885,3 +3885,69 @@ body.soft-buzz-active {
   color: #fff;
   border-color: var(--accent-red);
 }
+
+/* Netmon GlassWire-style Speed & Consumption Badges */
+.netmon-speed-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.netmon-speed-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #121212;
+  border: 1px solid #242424;
+  white-space: nowrap;
+}
+
+.netmon-speed-pill.down {
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.25);
+}
+
+.netmon-speed-pill.up {
+  color: #60a5fa;
+  border-color: rgba(96, 165, 250, 0.25);
+}
+
+.netmon-speed-pill.zero {
+  color: #555555;
+  border-color: #1f1f1f;
+  font-weight: 400;
+}
+
+.netmon-total-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #141414;
+  border: 1px solid #2a2a2a;
+  color: #f3f4f6;
+  white-space: nowrap;
+}
+
+.netmon-total-pill.highlight {
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+}
+
+.netmon-total-sub {
+  font-size: 10px;
+  color: #71717a;
+  font-family: var(--font-mono);
+  font-weight: 400;
+}

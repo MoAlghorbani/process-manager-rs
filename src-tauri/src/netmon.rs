@@ -6,9 +6,13 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::NetworkManagement::IpHelper::*;
 use windows_sys::Win32::Networking::WinSock::{
     getnameinfo, AF_INET, AF_INET6, SOCKADDR_IN, SOCKADDR_IN6,
+};
+use windows_sys::Win32::System::Threading::{
+    GetProcessIoCounters, OpenProcess, IO_COUNTERS, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +31,8 @@ pub struct NetworkConnectionItem {
     pub process_name: String,
     pub service_name: Option<String>,
     pub category: String, // "Local", "LAN", "Internet"
+    pub app_download_speed: u64,
+    pub app_upload_speed: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +44,10 @@ pub struct AppNetworkSummary {
     pub listening_count: usize,
     pub remote_domains: Vec<String>,
     pub service_name: Option<String>,
+    pub download_speed: u64,          // Live Bytes/sec ↓
+    pub upload_speed: u64,            // Live Bytes/sec ↑
+    pub total_session_download: u64,  // Cumulative Session Download Bytes
+    pub total_session_upload: u64,    // Cumulative Session Upload Bytes
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +58,10 @@ pub struct ServiceNetworkSummary {
     pub listening_ports: Vec<u16>,
     pub active_connections: usize,
     pub remote_domains: Vec<String>,
+    pub download_speed: u64,          // Live Bytes/sec ↓
+    pub upload_speed: u64,            // Live Bytes/sec ↑
+    pub total_session_download: u64,  // Cumulative Session Download Bytes
+    pub total_session_upload: u64,    // Cumulative Session Upload Bytes
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,11 +92,28 @@ pub struct NetworkMonitorSnapshot {
     pub total_established: usize,
     pub total_listening: usize,
     pub total_remote_hosts: usize,
+    pub top_consumer_app: Option<String>,
+    pub top_consumer_bytes: u64,
 }
 
 struct DnsCacheEntry {
     domain: String,
     resolved_at: Instant,
+}
+
+#[derive(Debug, Clone, Default)]
+struct AppTrafficStats {
+    current_download_rate: u64,
+    current_upload_rate: u64,
+    total_session_download: u64,
+    total_session_upload: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PidTrafficSample {
+    last_read: u64,
+    last_write: u64,
+    last_time: Instant,
 }
 
 pub struct NetworkMonitorEngine {
@@ -97,6 +128,8 @@ pub struct NetworkMonitorEngine {
     total_session_download: Arc<AtomicU64>,
     total_session_upload: Arc<AtomicU64>,
     active_interfaces_count: Arc<AtomicU64>,
+    app_traffic: Arc<RwLock<HashMap<String, AppTrafficStats>>>,
+    pid_traffic: Arc<RwLock<HashMap<u32, PidTrafficSample>>>,
 }
 
 impl NetworkMonitorEngine {
@@ -113,6 +146,8 @@ impl NetworkMonitorEngine {
             total_session_download: Arc::new(AtomicU64::new(0)),
             total_session_upload: Arc::new(AtomicU64::new(0)),
             active_interfaces_count: Arc::new(AtomicU64::new(0)),
+            app_traffic: Arc::new(RwLock::new(HashMap::new())),
+            pid_traffic: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -132,12 +167,16 @@ impl NetworkMonitorEngine {
         let tot_ul_clone = self.total_session_upload.clone();
         let if_count_clone = self.active_interfaces_count.clone();
 
+        let app_traffic_clone = self.app_traffic.clone();
+        let pid_traffic_clone = self.pid_traffic.clone();
+
         std::thread::Builder::new()
             .name("netmon-throughput-sampler".to_string())
             .spawn(move || {
                 loop {
                     std::thread::sleep(Duration::from_millis(1000));
 
+                    // 1. Adapter Bandwidth Sample
                     let (now_in, now_out, if_count) = sample_interface_octets();
                     if_count_clone.store(if_count as u64, Ordering::SeqCst);
 
@@ -156,7 +195,6 @@ impl NetworkMonitorEngine {
                             cur_dl_clone.store(rate_in, Ordering::SeqCst);
                             tot_dl_clone.fetch_add(delta_in, Ordering::SeqCst);
                         } else if prev_in > 0 && now_in < prev_in {
-                            // 32-bit counter wrap
                             let delta_in = (u32::MAX as u64 - prev_in) + now_in;
                             if delta_in < 100_000_000 {
                                 let rate_in = (delta_in as f64 / elapsed_secs) as u64;
@@ -179,6 +217,9 @@ impl NetworkMonitorEngine {
                             }
                         }
                     }
+
+                    // 2. Per-Process Network & I/O Consumption Tracking (GlassWire style)
+                    sample_active_processes_traffic(&app_traffic_clone, &pid_traffic_clone, now);
                 }
             })
             .ok();
@@ -208,20 +249,22 @@ impl NetworkMonitorEngine {
             }
         }
 
+        let app_traffic_cache = self.app_traffic.read().unwrap().clone();
+
         let mut connections: Vec<NetworkConnectionItem> = Vec::new();
         let mut unresolved_ips: Vec<IpAddr> = Vec::new();
 
         // 1. Query IPv4 TCP
-        self.collect_tcp_ipv4(&proc_map, &pid_to_service, &port_to_service, &mut connections, &mut unresolved_ips);
+        self.collect_tcp_ipv4(&proc_map, &pid_to_service, &port_to_service, &app_traffic_cache, &mut connections, &mut unresolved_ips);
 
         // 2. Query IPv6 TCP
-        self.collect_tcp_ipv6(&proc_map, &pid_to_service, &port_to_service, &mut connections, &mut unresolved_ips);
+        self.collect_tcp_ipv6(&proc_map, &pid_to_service, &port_to_service, &app_traffic_cache, &mut connections, &mut unresolved_ips);
 
         // 3. Query IPv4 UDP
-        self.collect_udp_ipv4(&proc_map, &pid_to_service, &port_to_service, &mut connections);
+        self.collect_udp_ipv4(&proc_map, &pid_to_service, &port_to_service, &app_traffic_cache, &mut connections);
 
         // 4. Query IPv6 UDP
-        self.collect_udp_ipv6(&proc_map, &pid_to_service, &port_to_service, &mut connections);
+        self.collect_udp_ipv6(&proc_map, &pid_to_service, &port_to_service, &app_traffic_cache, &mut connections);
 
         // Trigger background optimistic reverse DNS for any unresolved external IPs
         self.schedule_async_dns_resolutions(unresolved_ips);
@@ -281,12 +324,24 @@ impl NetworkMonitorEngine {
             }
         }
 
-        // Build Apps Summary list
+        // Build Apps Summary list with GlassWire bandwidth & total consumption stats
         let mut apps_summary: Vec<AppNetworkSummary> = app_map
             .into_iter()
             .map(|(proc_name, (pids, total, established, listening, domains, service))| {
                 let mut d_list: Vec<String> = domains.into_iter().collect();
                 d_list.sort();
+
+                let (dl_speed, ul_speed, tot_dl, tot_ul) = if let Some(stats) = app_traffic_cache.get(&proc_name) {
+                    (
+                        stats.current_download_rate,
+                        stats.current_upload_rate,
+                        stats.total_session_download,
+                        stats.total_session_upload,
+                    )
+                } else {
+                    (0, 0, 0, 0)
+                };
+
                 AppNetworkSummary {
                     process_name: proc_name,
                     pids,
@@ -295,17 +350,48 @@ impl NetworkMonitorEngine {
                     listening_count: listening,
                     remote_domains: d_list,
                     service_name: service,
+                    download_speed: dl_speed,
+                    upload_speed: ul_speed,
+                    total_session_download: tot_dl,
+                    total_session_upload: tot_ul,
                 }
             })
             .collect();
-        apps_summary.sort_by(|a, b| b.total_connections.cmp(&a.total_connections));
 
-        // Build Services Summary list
+        // Sort by highest data consumption first (like GlassWire), then by total connections
+        apps_summary.sort_by(|a, b| {
+            let a_total = a.total_session_download + a.total_session_upload;
+            let b_total = b.total_session_download + b.total_session_upload;
+            b_total.cmp(&a_total).then_with(|| b.total_connections.cmp(&a.total_connections))
+        });
+
+        // Identify Top Consumer App
+        let top_consumer = apps_summary.first().filter(|a| (a.total_session_download + a.total_session_upload) > 0);
+        let top_consumer_app = top_consumer.map(|a| a.process_name.clone());
+        let top_consumer_bytes = top_consumer.map(|a| a.total_session_download + a.total_session_upload).unwrap_or(0);
+
+        // Build Services Summary list with live bandwidth and total data usage
         let mut services_summary: Vec<ServiceNetworkSummary> = Vec::new();
         for s in &services {
             let mut listening_ports = Vec::new();
             let mut active_conns = 0;
             let mut rem_domains = HashSet::new();
+
+            let mut svc_dl_speed = 0u64;
+            let mut svc_ul_speed = 0u64;
+            let mut svc_tot_dl = 0u64;
+            let mut svc_tot_ul = 0u64;
+
+            if let Some(pid) = s.pid {
+                if let Some(pname) = proc_map.get(&pid) {
+                    if let Some(stats) = app_traffic_cache.get(pname) {
+                        svc_dl_speed += stats.current_download_rate;
+                        svc_ul_speed += stats.current_upload_rate;
+                        svc_tot_dl += stats.total_session_download;
+                        svc_tot_ul += stats.total_session_upload;
+                    }
+                }
+            }
 
             for c in &connections {
                 if c.service_name.as_deref() == Some(&s.name) {
@@ -329,6 +415,10 @@ impl NetworkMonitorEngine {
                 listening_ports,
                 active_connections: active_conns,
                 remote_domains: rem_domains.into_iter().collect(),
+                download_speed: svc_dl_speed,
+                upload_speed: svc_ul_speed,
+                total_session_download: svc_tot_dl,
+                total_session_upload: svc_tot_ul,
             });
         }
         services_summary.sort_by(|a, b| b.active_connections.cmp(&a.active_connections));
@@ -371,6 +461,8 @@ impl NetworkMonitorEngine {
             total_established,
             total_listening,
             total_remote_hosts: remote_hosts_set.len(),
+            top_consumer_app,
+            top_consumer_bytes,
         }
     }
 
@@ -473,6 +565,7 @@ impl NetworkMonitorEngine {
         proc_map: &HashMap<u32, String>,
         pid_to_service: &HashMap<u32, String>,
         port_to_service: &HashMap<u16, String>,
+        app_traffic: &HashMap<String, AppTrafficStats>,
         connections: &mut Vec<NetworkConnectionItem>,
         unresolved_ips: &mut Vec<IpAddr>,
     ) {
@@ -538,6 +631,11 @@ impl NetworkMonitorEngine {
                         format!("{}:{}", remote_ip, remote_port)
                     };
 
+                    let (dl_speed, ul_speed) = app_traffic
+                        .get(&process_name)
+                        .map(|s| (s.current_download_rate, s.current_upload_rate))
+                        .unwrap_or((0, 0));
+
                     let id = format!("tcp4-{}:{}-{}:{}-{}", local_ip, local_port, remote_ip, remote_port, pid);
 
                     connections.push(NetworkConnectionItem {
@@ -555,6 +653,8 @@ impl NetworkMonitorEngine {
                         process_name,
                         service_name,
                         category,
+                        app_download_speed: dl_speed,
+                        app_upload_speed: ul_speed,
                     });
                 }
             }
@@ -566,6 +666,7 @@ impl NetworkMonitorEngine {
         proc_map: &HashMap<u32, String>,
         pid_to_service: &HashMap<u32, String>,
         port_to_service: &HashMap<u16, String>,
+        app_traffic: &HashMap<String, AppTrafficStats>,
         connections: &mut Vec<NetworkConnectionItem>,
         unresolved_ips: &mut Vec<IpAddr>,
     ) {
@@ -631,6 +732,11 @@ impl NetworkMonitorEngine {
                         format!("[{}]:{}", remote_ip, remote_port)
                     };
 
+                    let (dl_speed, ul_speed) = app_traffic
+                        .get(&process_name)
+                        .map(|s| (s.current_download_rate, s.current_upload_rate))
+                        .unwrap_or((0, 0));
+
                     let id = format!("tcp6-[{}]:{}-[{}]:{}-{}", local_ip, local_port, remote_ip, remote_port, pid);
 
                     connections.push(NetworkConnectionItem {
@@ -648,6 +754,8 @@ impl NetworkMonitorEngine {
                         process_name,
                         service_name,
                         category,
+                        app_download_speed: dl_speed,
+                        app_upload_speed: ul_speed,
                     });
                 }
             }
@@ -659,6 +767,7 @@ impl NetworkMonitorEngine {
         proc_map: &HashMap<u32, String>,
         pid_to_service: &HashMap<u32, String>,
         port_to_service: &HashMap<u16, String>,
+        app_traffic: &HashMap<String, AppTrafficStats>,
         connections: &mut Vec<NetworkConnectionItem>,
     ) {
         let mut size = 0u32;
@@ -708,6 +817,11 @@ impl NetworkMonitorEngine {
                         .cloned()
                         .or_else(|| port_to_service.get(&local_port).cloned());
 
+                    let (dl_speed, ul_speed) = app_traffic
+                        .get(&process_name)
+                        .map(|s| (s.current_download_rate, s.current_upload_rate))
+                        .unwrap_or((0, 0));
+
                     let id = format!("udp4-{}:{}-{}", local_ip, local_port, pid);
 
                     connections.push(NetworkConnectionItem {
@@ -725,6 +839,8 @@ impl NetworkMonitorEngine {
                         process_name,
                         service_name,
                         category: "Local".to_string(),
+                        app_download_speed: dl_speed,
+                        app_upload_speed: ul_speed,
                     });
                 }
             }
@@ -736,6 +852,7 @@ impl NetworkMonitorEngine {
         proc_map: &HashMap<u32, String>,
         pid_to_service: &HashMap<u32, String>,
         port_to_service: &HashMap<u16, String>,
+        app_traffic: &HashMap<String, AppTrafficStats>,
         connections: &mut Vec<NetworkConnectionItem>,
     ) {
         let mut size = 0u32;
@@ -785,6 +902,11 @@ impl NetworkMonitorEngine {
                         .cloned()
                         .or_else(|| port_to_service.get(&local_port).cloned());
 
+                    let (dl_speed, ul_speed) = app_traffic
+                        .get(&process_name)
+                        .map(|s| (s.current_download_rate, s.current_upload_rate))
+                        .unwrap_or((0, 0));
+
                     let id = format!("udp6-[{}]:{}-{}", local_ip, local_port, pid);
 
                     connections.push(NetworkConnectionItem {
@@ -802,11 +924,131 @@ impl NetworkMonitorEngine {
                         process_name,
                         service_name,
                         category: "Local".to_string(),
+                        app_download_speed: dl_speed,
+                        app_upload_speed: ul_speed,
                     });
                 }
             }
         }
     }
+}
+
+fn sample_active_processes_traffic(
+    app_traffic: &Arc<RwLock<HashMap<String, AppTrafficStats>>>,
+    pid_traffic: &Arc<RwLock<HashMap<u32, PidTrafficSample>>>,
+    now: Instant,
+) {
+    let proc_map = get_process_name_map();
+    let network_pids = get_active_network_pids();
+
+    let mut current_pid_deltas: HashMap<u32, (u64, u64)> = HashMap::new();
+
+    {
+        let mut p_map = pid_traffic.write().unwrap();
+
+        for pid in network_pids {
+            if let Some((curr_r, curr_w)) = sample_process_io(pid) {
+                if let Some(entry) = p_map.get_mut(&pid) {
+                    let elapsed = now.duration_since(entry.last_time).as_secs_f64();
+                    if elapsed > 0.1 {
+                        let delta_r = curr_r.saturating_sub(entry.last_read);
+                        let delta_w = curr_w.saturating_sub(entry.last_write);
+                        let r_speed = (delta_r as f64 / elapsed) as u64;
+                        let w_speed = (delta_w as f64 / elapsed) as u64;
+
+                        current_pid_deltas.insert(pid, (r_speed, w_speed));
+                        entry.last_read = curr_r;
+                        entry.last_write = curr_w;
+                        entry.last_time = now;
+                    }
+                } else {
+                    p_map.insert(
+                        pid,
+                        PidTrafficSample {
+                            last_read: curr_r,
+                            last_write: curr_w,
+                            last_time: now,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    // Aggregate PID deltas to process names
+    let mut app_map = app_traffic.write().unwrap();
+
+    // Reset current active rates for all known apps to 0 first (in case an app went idle)
+    for stats in app_map.values_mut() {
+        stats.current_download_rate = 0;
+        stats.current_upload_rate = 0;
+    }
+
+    for (pid, (r_speed, w_speed)) in current_pid_deltas {
+        if let Some(proc_name) = proc_map.get(&pid) {
+            let stats = app_map.entry(proc_name.clone()).or_insert_with(AppTrafficStats::default);
+            stats.current_download_rate += r_speed;
+            stats.current_upload_rate += w_speed;
+            stats.total_session_download += r_speed; // accumulates 1s slice
+            stats.total_session_upload += w_speed;
+        }
+    }
+}
+
+fn sample_process_io(pid: u32) -> Option<(u64, u64)> {
+    if pid <= 4 {
+        return None;
+    }
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let mut counters: IO_COUNTERS = std::mem::zeroed();
+        let ret = GetProcessIoCounters(handle, &mut counters);
+        CloseHandle(handle);
+        if ret != 0 {
+            Some((counters.ReadTransferCount, counters.WriteTransferCount))
+        } else {
+            None
+        }
+    }
+}
+
+fn get_active_network_pids() -> HashSet<u32> {
+    let mut pids = HashSet::new();
+    let mut size = 0u32;
+    unsafe {
+        GetExtendedTcpTable(std::ptr::null_mut(), &mut size, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_ALL, 0);
+        if size > 0 {
+            let mut buf = vec![0u8; size as usize];
+            if GetExtendedTcpTable(buf.as_mut_ptr() as *mut _, &mut size, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_ALL, 0) == 0 {
+                let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
+                let entries = std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
+                for row in entries {
+                    if row.dwOwningPid > 4 {
+                        pids.insert(row.dwOwningPid);
+                    }
+                }
+            }
+        }
+
+        size = 0;
+        GetExtendedUdpTable(std::ptr::null_mut(), &mut size, 0, AF_INET as u32, UDP_TABLE_OWNER_PID, 0);
+        if size > 0 {
+            let mut buf = vec![0u8; size as usize];
+            if GetExtendedUdpTable(buf.as_mut_ptr() as *mut _, &mut size, 0, AF_INET as u32, UDP_TABLE_OWNER_PID, 0) == 0 {
+                let table = &*(buf.as_ptr() as *const MIB_UDPTABLE_OWNER_PID);
+                let entries = std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
+                for row in entries {
+                    if row.dwOwningPid > 4 {
+                        pids.insert(row.dwOwningPid);
+                    }
+                }
+            }
+        }
+    }
+    pids
 }
 
 fn tcp_state_to_str(state: u32) -> &'static str {
@@ -851,7 +1093,6 @@ fn sample_interface_octets() -> (u64, u64, usize) {
         let entries = std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
 
         for row in entries {
-            // Filter loopback (MIB_IF_TYPE_LOOPBACK = 24)
             if row.dwType != 24 && row.dwOperStatus == 1 {
                 total_in += row.dwInOctets as u64;
                 total_out += row.dwOutOctets as u64;

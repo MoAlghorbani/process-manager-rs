@@ -3763,11 +3763,19 @@ function updateNetMonStats(snapshot) {
   // Host & App KPIs
   const elDomains = document.getElementById("netmon-stat-domains-count");
   const elApps = document.getElementById("netmon-stat-apps-count");
-  const elIfs = document.getElementById("netmon-stat-interfaces");
+  const elTopConsumer = document.getElementById("netmon-stat-top-consumer");
 
   if (elDomains) elDomains.textContent = snapshot.total_remote_hosts;
   if (elApps) elApps.textContent = snapshot.apps_summary.length;
-  if (elIfs) elIfs.textContent = snapshot.throughput.active_interfaces_count;
+  if (elTopConsumer) {
+    if (snapshot.top_consumer_app && snapshot.top_consumer_bytes > 0) {
+      elTopConsumer.textContent = `Top: ${snapshot.top_consumer_app} (${formatBytes(snapshot.top_consumer_bytes)})`;
+      elTopConsumer.title = `Highest session data consumer: ${snapshot.top_consumer_app} (${formatBytes(snapshot.top_consumer_bytes)})`;
+    } else {
+      elTopConsumer.textContent = `Top: -`;
+      elTopConsumer.title = "";
+    }
+  }
 
   // Badges on Pills
   const bConns = document.getElementById("badge-count-connections");
@@ -3779,6 +3787,37 @@ function updateNetMonStats(snapshot) {
   if (bApps) bApps.textContent = snapshot.apps_summary.length;
   if (bServices) bServices.textContent = snapshot.services_summary.length;
   if (bDomains) bDomains.textContent = snapshot.domains_summary.length;
+}
+
+function formatNetSpeedPills(dl, ul) {
+  const dlVal = Number(dl) || 0;
+  const ulVal = Number(ul) || 0;
+  const dlClass = dlVal > 0 ? "netmon-speed-pill down" : "netmon-speed-pill zero";
+  const ulClass = ulVal > 0 ? "netmon-speed-pill up" : "netmon-speed-pill zero";
+  const dlText = dlVal > 0 ? `${formatBytes(dlVal)}/s` : "0 B/s";
+  const ulText = ulVal > 0 ? `${formatBytes(ulVal)}/s` : "0 B/s";
+  return `
+    <div class="netmon-speed-cell">
+      <span class="${dlClass}" title="Live Download Bandwidth">↓ ${dlText}</span>
+      <span class="${ulClass}" title="Live Upload Bandwidth">↑ ${ulText}</span>
+    </div>
+  `;
+}
+
+function formatNetTotalPills(totDl, totUl) {
+  const dlVal = Number(totDl) || 0;
+  const ulVal = Number(totUl) || 0;
+  const sum = dlVal + ulVal;
+  const isHigh = sum > 10 * 1024 * 1024;
+  const sumDisplay = formatBytes(sum);
+  const dlDisplay = formatBytes(dlVal);
+  const ulDisplay = formatBytes(ulVal);
+  return `
+    <div class="netmon-total-pill ${isHigh ? 'highlight' : ''}" title="Cumulative Session Usage: ${sumDisplay} (Total Downloaded: ${dlDisplay}, Total Uploaded: ${ulDisplay})">
+      <span>${sumDisplay}</span>
+      <span class="netmon-total-sub">↓${dlDisplay} ↑${ulDisplay}</span>
+    </div>
+  `;
 }
 
 function renderNetMonCurrentView() {
@@ -3828,7 +3867,7 @@ function renderNetMonConnections(conns) {
   });
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="netmon-loading">${q || cat !== "all" ? "No network sockets match current filter." : "No active network sockets detected."}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="netmon-loading">${q || cat !== "all" ? "No network sockets match current filter." : "No active network sockets detected."}</td></tr>`;
     return;
   }
 
@@ -3865,6 +3904,7 @@ function renderNetMonConnections(conns) {
           <span class="netmon-proc-name">${escapeHtml(c.process_name)}</span>
           <span class="netmon-pid">[${c.pid}]</span>
         </td>
+        <td>${formatNetSpeedPills(c.app_download_speed, c.app_upload_speed)}</td>
         <td>${serviceBadge}</td>
         <td><code class="font-mono" style="font-size: 11px;">${escapeHtml(c.local_addr)}</code></td>
         <td>${remoteDisplay}</td>
@@ -3880,7 +3920,7 @@ function renderNetMonConnections(conns) {
   });
 
   if (filtered.length > 250) {
-    html += `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 10px; font-size: 11px;">Showing first 250 sockets (${filtered.length - 250} more filtered). Use search bar to narrow results.</td></tr>`;
+    html += `<tr><td colspan="9" style="text-align: center; color: var(--text-dim); padding: 10px; font-size: 11px;">Showing first 250 sockets (${filtered.length - 250} more filtered). Use search bar to narrow results.</td></tr>`;
   }
 
   tbody.innerHTML = html;
@@ -3915,8 +3955,8 @@ function renderNetMonApps(apps) {
       (a.pids.length > 3 ? ` <span class="netmon-tag-pill">+${a.pids.length - 3}</span>` : "");
 
     const domainsDisplay = a.remote_domains.length > 0
-      ? a.remote_domains.slice(0, 6).map((d) => `<span class="netmon-tag-pill accent">${escapeHtml(d)}</span>`).join(" ") +
-        (a.remote_domains.length > 6 ? ` <span class="netmon-tag-pill">+${a.remote_domains.length - 6} more</span>` : "")
+      ? a.remote_domains.slice(0, 5).map((d) => `<span class="netmon-tag-pill accent">${escapeHtml(d)}</span>`).join(" ") +
+        (a.remote_domains.length > 5 ? ` <span class="netmon-tag-pill">+${a.remote_domains.length - 5} more</span>` : "")
       : `<span style="color: var(--text-dim); font-size: 11px;">Local Only</span>`;
 
     const firstPid = a.pids.length > 0 ? a.pids[0] : 0;
@@ -3925,9 +3965,13 @@ function renderNetMonApps(apps) {
       <tr>
         <td><strong class="netmon-proc-name">${escapeHtml(a.process_name)}</strong></td>
         <td>${pidsDisplay}</td>
-        <td><strong style="color: var(--text-main); font-family: var(--font-mono);">${a.total_connections}</strong></td>
-        <td><span class="badge-state-est">${a.established_count}</span></td>
-        <td><span class="badge-state-listen">${a.listening_count}</span></td>
+        <td>${formatNetSpeedPills(a.download_speed, a.upload_speed)}</td>
+        <td>${formatNetTotalPills(a.total_session_download, a.total_session_upload)}</td>
+        <td>
+          <strong style="color: var(--text-main); font-family: var(--font-mono);">${a.total_connections}</strong>
+          <span class="badge-state-est" style="font-size: 10px; margin-left: 3px;" title="Established">${a.established_count}</span>
+          <span class="badge-state-listen" style="font-size: 10px; margin-left: 2px;" title="Listening">${a.listening_count}</span>
+        </td>
         <td>${serviceBadge}</td>
         <td>${domainsDisplay}</td>
         <td style="text-align: right;">
@@ -3957,7 +4001,7 @@ function renderNetMonServices(services) {
   });
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" class="netmon-loading">${q ? "No services match search filter." : "No supervised services registered in Process Manager."}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="netmon-loading">${q ? "No services match search filter." : "No supervised services registered in Process Manager."}</td></tr>`;
     return;
   }
 
@@ -3981,6 +4025,8 @@ function renderNetMonServices(services) {
         <td><strong>${escapeHtml(s.service_name)}</strong></td>
         <td>${statusBadge}</td>
         <td><code class="font-mono">${s.pid ? s.pid : "-"}</code></td>
+        <td>${formatNetSpeedPills(s.download_speed, s.upload_speed)}</td>
+        <td>${formatNetTotalPills(s.total_session_download, s.total_session_upload)}</td>
         <td>${portsDisplay}</td>
         <td><strong style="color: var(--text-main); font-family: var(--font-mono);">${s.active_connections}</strong></td>
         <td>${domainsDisplay}</td>
