@@ -3951,3 +3951,91 @@ body.soft-buzz-active {
   font-family: var(--font-mono);
   font-weight: 400;
 }
+
+/* Netmon Timeframe & Date Range Filter Bar */
+.netmon-timeframe-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  background: #0d0d0d;
+  border: 1px solid #1f1f1f;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.netmon-timeframe-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.netmon-timeframe-heading {
+  font-size: 11px;
+  font-weight: 700;
+  color: #888888;
+  letter-spacing: 0.5px;
+}
+
+.netmon-timeframe-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.timeframe-pill {
+  background: #141414;
+  border: 1px solid #262626;
+  color: #a3a3a3;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  user-select: none;
+}
+
+.timeframe-pill:hover {
+  background: #1f1f1f;
+  color: #ffffff;
+  border-color: #383838;
+}
+
+.timeframe-pill.active {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+  font-weight: 600;
+}
+
+.netmon-timeframe-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.netmon-date-label {
+  font-size: 11px;
+  color: #888888;
+}
+
+.netmon-date-picker {
+  background: #121212;
+  border: 1px solid #282828;
+  color: #f3f4f6;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  outline: none;
+  font-family: inherit;
+  color-scheme: dark;
+}
+
+.netmon-date-picker:focus {
+  border-color: #ef4444;
+}

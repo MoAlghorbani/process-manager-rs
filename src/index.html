@@ -901,7 +901,7 @@
             <div class="netmon-kpi-body">
               <span class="netmon-kpi-label">DOWNLOAD RATE</span>
               <span class="netmon-kpi-val" id="netmon-stat-download">0 B/s</span>
-              <span class="netmon-kpi-sub">Session: <span id="netmon-stat-total-down">0 B</span></span>
+              <span class="netmon-kpi-sub"><span id="netmon-stat-down-label">Session</span>: <span id="netmon-stat-total-down">0 B</span></span>
             </div>
           </div>
 
@@ -910,7 +910,7 @@
             <div class="netmon-kpi-body">
               <span class="netmon-kpi-label">UPLOAD RATE</span>
               <span class="netmon-kpi-val" id="netmon-stat-upload">0 B/s</span>
-              <span class="netmon-kpi-sub">Session: <span id="netmon-stat-total-up">0 B</span></span>
+              <span class="netmon-kpi-sub"><span id="netmon-stat-up-label">Session</span>: <span id="netmon-stat-total-up">0 B</span></span>
             </div>
           </div>
 
@@ -930,6 +930,26 @@
               <span class="netmon-kpi-val"><span id="netmon-stat-domains-count">0</span> Hosts</span>
               <span class="netmon-kpi-sub"><span id="netmon-stat-apps-count">0</span> Apps • <span id="netmon-stat-top-consumer">Top: -</span></span>
             </div>
+          </div>
+        </div>
+
+        <!-- Date / Period Filter Bar (GlassWire Timeframe Filter) -->
+        <div class="netmon-timeframe-bar">
+          <div class="netmon-timeframe-left">
+            <span class="netmon-timeframe-heading">📅 PERIOD:</span>
+            <div class="netmon-timeframe-pills" id="netmon-timeframe-pills">
+              <button class="timeframe-pill active" data-tf="session" id="tf-pill-session" title="Live current session counters">⚡ Live Session</button>
+              <button class="timeframe-pill" data-tf="today" id="tf-pill-today" title="Today's total usage">📆 Today</button>
+              <button class="timeframe-pill" data-tf="yesterday" id="tf-pill-yesterday" title="Yesterday's usage">Yesterday</button>
+              <button class="timeframe-pill" data-tf="week" id="tf-pill-week" title="Past 7 days aggregated usage">7 Days (Week)</button>
+              <button class="timeframe-pill" data-tf="month" id="tf-pill-month" title="Past 30 days aggregated usage">30 Days (Month)</button>
+              <button class="timeframe-pill" data-tf="all" id="tf-pill-all" title="All-time recorded network history">All History</button>
+            </div>
+          </div>
+          <div class="netmon-timeframe-right">
+            <span class="netmon-date-label">Pick Date:</span>
+            <input type="date" id="input-netmon-custom-date" class="form-input form-input-sm netmon-date-picker" title="Inspect network usage on a specific day" />
+            <button class="btn btn-secondary btn-sm hidden" id="btn-clear-netmon-date" title="Clear specific date selection">✕</button>
           </div>
         </div>
 
@@ -1020,7 +1040,7 @@
                     <th style="width: 180px;">APPLICATION</th>
                     <th style="width: 90px;">ACTIVE PIDs</th>
                     <th style="width: 170px;">LIVE SPEED (↓ / ↑)</th>
-                    <th style="width: 170px;">TOTAL USAGE (↓ / ↑)</th>
+                    <th style="width: 170px;" id="th-netmon-apps-usage">TOTAL USAGE (↓ / ↑)</th>
                     <th style="width: 110px;">CONNS (EST/LIS)</th>
                     <th style="width: 140px;">MANAGED SERVICE</th>
                     <th>CONNECTED DOMAINS &amp; HOSTS</th>
@@ -1044,7 +1064,7 @@
                     <th style="width: 100px;">STATUS</th>
                     <th style="width: 80px;">PID</th>
                     <th style="width: 160px;">LIVE SPEED (↓ / ↑)</th>
-                    <th style="width: 160px;">TOTAL USAGE (↓ / ↑)</th>
+                    <th style="width: 160px;" id="th-netmon-services-usage">TOTAL USAGE (↓ / ↑)</th>
                     <th style="width: 140px;">LISTENING PORTS</th>
                     <th style="width: 120px;">OUTBOUND CONNS</th>
                     <th>CONNECTED REMOTE DOMAINS</th>

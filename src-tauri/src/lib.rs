@@ -190,6 +190,7 @@ pub fn run() {
             commands::save_media_workspace,
             // Network Activity Monitor
             commands::get_network_snapshot,
+            commands::clear_network_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Process Manager application");

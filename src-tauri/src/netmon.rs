@@ -1,9 +1,12 @@
-use crate::manager::ProcessManager;
+use crate::manager::{get_data_dir, ProcessManager};
 use crate::win32::get_process_name_map;
+use chrono::{Duration as ChronoDuration, Local};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::CloseHandle;
@@ -48,6 +51,9 @@ pub struct AppNetworkSummary {
     pub upload_speed: u64,            // Live Bytes/sec ↑
     pub total_session_download: u64,  // Cumulative Session Download Bytes
     pub total_session_upload: u64,    // Cumulative Session Upload Bytes
+    pub timeframe_download: u64,      // Timeframe Filtered Download Bytes (e.g. Day, Week, Month, All)
+    pub timeframe_upload: u64,        // Timeframe Filtered Upload Bytes
+    pub is_active_now: bool,          // Whether sockets are currently open or app is historical
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +68,8 @@ pub struct ServiceNetworkSummary {
     pub upload_speed: u64,            // Live Bytes/sec ↑
     pub total_session_download: u64,  // Cumulative Session Download Bytes
     pub total_session_upload: u64,    // Cumulative Session Upload Bytes
+    pub timeframe_download: u64,      // Timeframe Filtered Download Bytes
+    pub timeframe_upload: u64,        // Timeframe Filtered Upload Bytes
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +102,149 @@ pub struct NetworkMonitorSnapshot {
     pub total_remote_hosts: usize,
     pub top_consumer_app: Option<String>,
     pub top_consumer_bytes: u64,
+    pub timeframe: String,
+    pub timeframe_label: String,
+    pub timeframe_total_download: u64,
+    pub timeframe_total_upload: u64,
+    pub available_dates: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AppDayUsage {
+    pub download: u64,
+    pub upload: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DayRecord {
+    pub total_download: u64,
+    pub total_upload: u64,
+    pub apps: HashMap<String, AppDayUsage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NetworkHistoryData {
+    pub days: HashMap<String, DayRecord>,
+}
+
+pub struct NetworkHistoryManager {
+    file_path: PathBuf,
+    data: RwLock<NetworkHistoryData>,
+    dirty: AtomicBool,
+}
+
+impl NetworkHistoryManager {
+    pub fn new(base_dir: PathBuf) -> Self {
+        let file_path = base_dir.join("network_history.json");
+        let mut data = NetworkHistoryData::default();
+        if file_path.exists() {
+            if let Ok(content) = fs::read_to_string(&file_path) {
+                if let Ok(parsed) = serde_json::from_str::<NetworkHistoryData>(&content) {
+                    data = parsed;
+                }
+            }
+        }
+        Self {
+            file_path,
+            data: RwLock::new(data),
+            dirty: AtomicBool::new(false),
+        }
+    }
+
+    pub fn record_traffic(
+        &self,
+        date_str: &str,
+        delta_in: u64,
+        delta_out: u64,
+        app_deltas: &HashMap<String, (u64, u64)>,
+    ) {
+        if delta_in == 0 && delta_out == 0 && app_deltas.is_empty() {
+            return;
+        }
+
+        let mut lock = self.data.write().unwrap();
+        let day = lock.days.entry(date_str.to_string()).or_default();
+        day.total_download += delta_in;
+        day.total_upload += delta_out;
+
+        for (app_name, (dl, ul)) in app_deltas {
+            if *dl > 0 || *ul > 0 {
+                let app_entry = day.apps.entry(app_name.clone()).or_default();
+                app_entry.download += dl;
+                app_entry.upload += ul;
+            }
+        }
+        self.dirty.store(true, Ordering::SeqCst);
+    }
+
+    pub fn flush_if_dirty(&self) {
+        if self.dirty.swap(false, Ordering::SeqCst) {
+            if let Ok(lock) = self.data.read() {
+                if let Ok(json) = serde_json::to_string_pretty(&*lock) {
+                    let _ = fs::write(&self.file_path, json);
+                }
+            }
+        }
+    }
+
+    pub fn clear(&self) {
+        let mut lock = self.data.write().unwrap();
+        lock.days.clear();
+        self.dirty.store(true, Ordering::SeqCst);
+        let _ = fs::write(&self.file_path, "{\n  \"days\": {}\n}\n");
+    }
+
+    pub fn get_available_dates(&self) -> Vec<String> {
+        if let Ok(lock) = self.data.read() {
+            let mut dates: Vec<String> = lock.days.keys().cloned().collect();
+            dates.sort_by(|a, b| b.cmp(a));
+            dates
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn query_range(&self, matching_dates: &[String]) -> (u64, u64, HashMap<String, (u64, u64)>) {
+        let mut tot_dl = 0u64;
+        let mut tot_ul = 0u64;
+        let mut app_totals: HashMap<String, (u64, u64)> = HashMap::new();
+
+        if let Ok(lock) = self.data.read() {
+            for d in matching_dates {
+                if let Some(day) = lock.days.get(d) {
+                    tot_dl += day.total_download;
+                    tot_ul += day.total_upload;
+                    for (app, usage) in &day.apps {
+                        let entry = app_totals.entry(app.clone()).or_insert((0, 0));
+                        entry.0 += usage.download;
+                        entry.1 += usage.upload;
+                    }
+                }
+            }
+        }
+
+        (tot_dl, tot_ul, app_totals)
+    }
+
+    pub fn query_all(&self) -> (u64, u64, HashMap<String, (u64, u64)>) {
+        let mut tot_dl = 0u64;
+        let mut tot_ul = 0u64;
+        let mut app_totals: HashMap<String, (u64, u64)> = HashMap::new();
+
+        if let Ok(lock) = self.data.read() {
+            for day in lock.days.values() {
+                tot_dl += day.total_download;
+                tot_ul += day.total_upload;
+                for (app, usage) in &day.apps {
+                    let entry = app_totals.entry(app.clone()).or_insert((0, 0));
+                    entry.0 += usage.download;
+                    entry.1 += usage.upload;
+                }
+            }
+        }
+
+        (tot_dl, tot_ul, app_totals)
+    }
 }
 
 struct DnsCacheEntry {
@@ -130,10 +281,12 @@ pub struct NetworkMonitorEngine {
     active_interfaces_count: Arc<AtomicU64>,
     app_traffic: Arc<RwLock<HashMap<String, AppTrafficStats>>>,
     pid_traffic: Arc<RwLock<HashMap<u32, PidTrafficSample>>>,
+    history: Arc<NetworkHistoryManager>,
 }
 
 impl NetworkMonitorEngine {
     pub fn new(pm: Arc<ProcessManager>) -> Self {
+        let history = Arc::new(NetworkHistoryManager::new(get_data_dir()));
         Self {
             pm,
             dns_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -148,7 +301,12 @@ impl NetworkMonitorEngine {
             active_interfaces_count: Arc::new(AtomicU64::new(0)),
             app_traffic: Arc::new(RwLock::new(HashMap::new())),
             pid_traffic: Arc::new(RwLock::new(HashMap::new())),
+            history,
         }
+    }
+
+    pub fn clear_history(&self) {
+        self.history.clear();
     }
 
     pub fn start(&self) {
@@ -169,10 +327,12 @@ impl NetworkMonitorEngine {
 
         let app_traffic_clone = self.app_traffic.clone();
         let pid_traffic_clone = self.pid_traffic.clone();
+        let history_clone = self.history.clone();
 
         std::thread::Builder::new()
             .name("netmon-throughput-sampler".to_string())
             .spawn(move || {
+                let mut flush_counter = 0u32;
                 loop {
                     std::thread::sleep(Duration::from_millis(1000));
 
@@ -185,18 +345,23 @@ impl NetworkMonitorEngine {
                     let elapsed_secs = now.duration_since(*last_t).as_secs_f64();
                     *last_t = now;
 
+                    let mut delta_in_sample = 0u64;
+                    let mut delta_out_sample = 0u64;
+
                     if elapsed_secs > 0.05 {
                         let prev_in = last_in_clone.swap(now_in, Ordering::SeqCst);
                         let prev_out = last_out_clone.swap(now_out, Ordering::SeqCst);
 
                         if prev_in > 0 && now_in >= prev_in {
                             let delta_in = now_in - prev_in;
+                            delta_in_sample = delta_in;
                             let rate_in = (delta_in as f64 / elapsed_secs) as u64;
                             cur_dl_clone.store(rate_in, Ordering::SeqCst);
                             tot_dl_clone.fetch_add(delta_in, Ordering::SeqCst);
                         } else if prev_in > 0 && now_in < prev_in {
                             let delta_in = (u32::MAX as u64 - prev_in) + now_in;
                             if delta_in < 100_000_000 {
+                                delta_in_sample = delta_in;
                                 let rate_in = (delta_in as f64 / elapsed_secs) as u64;
                                 cur_dl_clone.store(rate_in, Ordering::SeqCst);
                                 tot_dl_clone.fetch_add(delta_in, Ordering::SeqCst);
@@ -205,12 +370,14 @@ impl NetworkMonitorEngine {
 
                         if prev_out > 0 && now_out >= prev_out {
                             let delta_out = now_out - prev_out;
+                            delta_out_sample = delta_out;
                             let rate_out = (delta_out as f64 / elapsed_secs) as u64;
                             cur_ul_clone.store(rate_out, Ordering::SeqCst);
                             tot_ul_clone.fetch_add(delta_out, Ordering::SeqCst);
                         } else if prev_out > 0 && now_out < prev_out {
                             let delta_out = (u32::MAX as u64 - prev_out) + now_out;
                             if delta_out < 100_000_000 {
+                                delta_out_sample = delta_out;
                                 let rate_out = (delta_out as f64 / elapsed_secs) as u64;
                                 cur_ul_clone.store(rate_out, Ordering::SeqCst);
                                 tot_ul_clone.fetch_add(delta_out, Ordering::SeqCst);
@@ -219,13 +386,27 @@ impl NetworkMonitorEngine {
                     }
 
                     // 2. Per-Process Network & I/O Consumption Tracking (GlassWire style)
-                    sample_active_processes_traffic(&app_traffic_clone, &pid_traffic_clone, now);
+                    let app_deltas = sample_active_processes_traffic(&app_traffic_clone, &pid_traffic_clone, now);
+
+                    // 3. Record in Historical Store by Date
+                    let today_str = Local::now().format("%Y-%m-%d").to_string();
+                    history_clone.record_traffic(&today_str, delta_in_sample, delta_out_sample, &app_deltas);
+
+                    flush_counter += 1;
+                    if flush_counter >= 30 {
+                        flush_counter = 0;
+                        history_clone.flush_if_dirty();
+                    }
                 }
             })
             .ok();
     }
 
-    pub fn get_snapshot(&self) -> NetworkMonitorSnapshot {
+    pub fn get_snapshot(
+        &self,
+        timeframe: Option<&str>,
+        custom_date: Option<&str>,
+    ) -> NetworkMonitorSnapshot {
         let proc_map = get_process_name_map();
         let summary = self.pm.get_summary();
         let services = summary.services;
@@ -250,6 +431,103 @@ impl NetworkMonitorEngine {
         }
 
         let app_traffic_cache = self.app_traffic.read().unwrap().clone();
+
+        // Date & Timeframe parsing
+        let today_naive = Local::now().date_naive();
+        let today_str = today_naive.format("%Y-%m-%d").to_string();
+
+        let (tf_name, tf_label, maybe_dates) = match timeframe {
+            Some("today") => (
+                "today".to_string(),
+                "Today".to_string(),
+                Some(vec![today_str.clone()]),
+            ),
+            Some("yesterday") => {
+                let yest = (today_naive - ChronoDuration::days(1)).format("%Y-%m-%d").to_string();
+                (
+                    "yesterday".to_string(),
+                    "Yesterday".to_string(),
+                    Some(vec![yest]),
+                )
+            }
+            Some("week") => {
+                let mut dates = Vec::new();
+                for i in 0..7 {
+                    let d = (today_naive - ChronoDuration::days(i)).format("%Y-%m-%d").to_string();
+                    dates.push(d);
+                }
+                (
+                    "week".to_string(),
+                    "Past 7 Days".to_string(),
+                    Some(dates),
+                )
+            }
+            Some("month") => {
+                let mut dates = Vec::new();
+                for i in 0..30 {
+                    let d = (today_naive - ChronoDuration::days(i)).format("%Y-%m-%d").to_string();
+                    dates.push(d);
+                }
+                (
+                    "month".to_string(),
+                    "Past 30 Days".to_string(),
+                    Some(dates),
+                )
+            }
+            Some("all") => (
+                "all".to_string(),
+                "All History".to_string(),
+                None,
+            ),
+            Some("custom") => {
+                if let Some(d) = custom_date {
+                    (
+                        "custom".to_string(),
+                        d.to_string(),
+                        Some(vec![d.to_string()]),
+                    )
+                } else {
+                    (
+                        "today".to_string(),
+                        "Today".to_string(),
+                        Some(vec![today_str.clone()]),
+                    )
+                }
+            }
+            _ => (
+                "session".to_string(),
+                "Session".to_string(),
+                None,
+            ),
+        };
+
+        let is_session = tf_name == "session";
+        let (hist_tot_dl, hist_tot_ul, app_hist_map) = if is_session {
+            (
+                self.total_session_download.load(Ordering::SeqCst),
+                self.total_session_upload.load(Ordering::SeqCst),
+                HashMap::new(),
+            )
+        } else if let Some(ref dates) = maybe_dates {
+            self.history.query_range(dates)
+        } else {
+            self.history.query_all()
+        };
+
+        let timeframe_total_download = if is_session {
+            self.total_session_download.load(Ordering::SeqCst)
+        } else if tf_name == "today" {
+            hist_tot_dl.max(self.total_session_download.load(Ordering::SeqCst))
+        } else {
+            hist_tot_dl
+        };
+        let timeframe_total_upload = if is_session {
+            self.total_session_upload.load(Ordering::SeqCst)
+        } else if tf_name == "today" {
+            hist_tot_ul.max(self.total_session_upload.load(Ordering::SeqCst))
+        } else {
+            hist_tot_ul
+        };
 
         let mut connections: Vec<NetworkConnectionItem> = Vec::new();
         let mut unresolved_ips: Vec<IpAddr> = Vec::new();
@@ -324,53 +602,100 @@ impl NetworkMonitorEngine {
             }
         }
 
-        // Build Apps Summary list with GlassWire bandwidth & total consumption stats
-        let mut apps_summary: Vec<AppNetworkSummary> = app_map
-            .into_iter()
-            .map(|(proc_name, (pids, total, established, listening, domains, service))| {
-                let mut d_list: Vec<String> = domains.into_iter().collect();
-                d_list.sort();
+        // Build Apps Summary list with GlassWire bandwidth & timeframe consumption stats
+        let mut apps_summary: Vec<AppNetworkSummary> = Vec::new();
+        let mut seen_apps = HashSet::new();
 
-                let (dl_speed, ul_speed, tot_dl, tot_ul) = if let Some(stats) = app_traffic_cache.get(&proc_name) {
-                    (
-                        stats.current_download_rate,
-                        stats.current_upload_rate,
-                        stats.total_session_download,
-                        stats.total_session_upload,
-                    )
-                } else {
-                    (0, 0, 0, 0)
-                };
+        for (proc_name, (pids, total, established, listening, domains, service)) in app_map {
+            let mut d_list: Vec<String> = domains.into_iter().collect();
+            d_list.sort();
 
-                AppNetworkSummary {
-                    process_name: proc_name,
-                    pids,
-                    total_connections: total,
-                    established_count: established,
-                    listening_count: listening,
-                    remote_domains: d_list,
-                    service_name: service,
-                    download_speed: dl_speed,
-                    upload_speed: ul_speed,
-                    total_session_download: tot_dl,
-                    total_session_upload: tot_ul,
+            let (dl_speed, ul_speed, tot_dl, tot_ul) = if let Some(stats) = app_traffic_cache.get(&proc_name) {
+                (
+                    stats.current_download_rate,
+                    stats.current_upload_rate,
+                    stats.total_session_download,
+                    stats.total_session_upload,
+                )
+            } else {
+                (0, 0, 0, 0)
+            };
+
+            let (tf_dl, tf_ul) = if is_session {
+                (tot_dl, tot_ul)
+            } else if tf_name == "today" {
+                let (h_dl, h_ul) = app_hist_map.get(&proc_name).copied().unwrap_or((0, 0));
+                (h_dl.max(tot_dl), h_ul.max(tot_ul))
+            } else if let Some(&(h_dl, h_ul)) = app_hist_map.get(&proc_name) {
+                (h_dl, h_ul)
+            } else {
+                (0, 0)
+            };
+
+            seen_apps.insert(proc_name.clone());
+
+            apps_summary.push(AppNetworkSummary {
+                process_name: proc_name,
+                pids,
+                total_connections: total,
+                established_count: established,
+                listening_count: listening,
+                remote_domains: d_list,
+                service_name: service,
+                download_speed: dl_speed,
+                upload_speed: ul_speed,
+                total_session_download: tot_dl,
+                total_session_upload: tot_ul,
+                timeframe_download: tf_dl,
+                timeframe_upload: tf_ul,
+                is_active_now: true,
+            });
+        }
+
+        // Include inactive apps that had consumption during this historical timeframe
+        if !is_session {
+            for (proc_name, &(h_dl, h_ul)) in &app_hist_map {
+                if !seen_apps.contains(proc_name) && (h_dl > 0 || h_ul > 0) {
+                    apps_summary.push(AppNetworkSummary {
+                        process_name: proc_name.clone(),
+                        pids: Vec::new(),
+                        total_connections: 0,
+                        established_count: 0,
+                        listening_count: 0,
+                        remote_domains: Vec::new(),
+                        service_name: None,
+                        download_speed: 0,
+                        upload_speed: 0,
+                        total_session_download: 0,
+                        total_session_upload: 0,
+                        timeframe_download: h_dl,
+                        timeframe_upload: h_ul,
+                        is_active_now: false,
+                    });
                 }
-            })
-            .collect();
+            }
+        }
 
-        // Sort by highest data consumption first (like GlassWire), then by total connections
+        // Sort by highest timeframe data consumption first, then by active status, then by connection count
         apps_summary.sort_by(|a, b| {
-            let a_total = a.total_session_download + a.total_session_upload;
-            let b_total = b.total_session_download + b.total_session_upload;
-            b_total.cmp(&a_total).then_with(|| b.total_connections.cmp(&a.total_connections))
+            let a_total = a.timeframe_download + a.timeframe_upload;
+            let b_total = b.timeframe_download + b.timeframe_upload;
+            b_total
+                .cmp(&a_total)
+                .then_with(|| b.is_active_now.cmp(&a.is_active_now))
+                .then_with(|| b.total_connections.cmp(&a.total_connections))
         });
 
-        // Identify Top Consumer App
-        let top_consumer = apps_summary.first().filter(|a| (a.total_session_download + a.total_session_upload) > 0);
+        // Identify Top Consumer App for this timeframe
+        let top_consumer = apps_summary
+            .first()
+            .filter(|a| (a.timeframe_download + a.timeframe_upload) > 0);
         let top_consumer_app = top_consumer.map(|a| a.process_name.clone());
-        let top_consumer_bytes = top_consumer.map(|a| a.total_session_download + a.total_session_upload).unwrap_or(0);
+        let top_consumer_bytes = top_consumer
+            .map(|a| a.timeframe_download + a.timeframe_upload)
+            .unwrap_or(0);
 
-        // Build Services Summary list with live bandwidth and total data usage
+        // Build Services Summary list with live bandwidth and timeframe data usage
         let mut services_summary: Vec<ServiceNetworkSummary> = Vec::new();
         for s in &services {
             let mut listening_ports = Vec::new();
@@ -381,6 +706,8 @@ impl NetworkMonitorEngine {
             let mut svc_ul_speed = 0u64;
             let mut svc_tot_dl = 0u64;
             let mut svc_tot_ul = 0u64;
+            let mut svc_tf_dl = 0u64;
+            let mut svc_tf_ul = 0u64;
 
             if let Some(pid) = s.pid {
                 if let Some(pname) = proc_map.get(&pid) {
@@ -390,6 +717,22 @@ impl NetworkMonitorEngine {
                         svc_tot_dl += stats.total_session_download;
                         svc_tot_ul += stats.total_session_upload;
                     }
+                    if is_session {
+                        svc_tf_dl = svc_tot_dl;
+                        svc_tf_ul = svc_tot_ul;
+                    } else if tf_name == "today" {
+                        let (h_dl, h_ul) = app_hist_map.get(pname).copied().unwrap_or((0, 0));
+                        svc_tf_dl = h_dl.max(svc_tot_dl);
+                        svc_tf_ul = h_ul.max(svc_tot_ul);
+                    } else if let Some(&(h_dl, h_ul)) = app_hist_map.get(pname) {
+                        svc_tf_dl = h_dl;
+                        svc_tf_ul = h_ul;
+                    }
+                }
+            } else if !is_session {
+                if let Some(&(h_dl, h_ul)) = app_hist_map.get(&s.name) {
+                    svc_tf_dl = h_dl;
+                    svc_tf_ul = h_ul;
                 }
             }
 
@@ -408,20 +751,30 @@ impl NetworkMonitorEngine {
                 }
             }
 
+            listening_ports.sort();
+            let mut rem_domains_vec: Vec<String> = rem_domains.into_iter().collect();
+            rem_domains_vec.sort();
+
             services_summary.push(ServiceNetworkSummary {
                 service_name: s.name.clone(),
                 pid: s.pid,
                 status: s.status.clone(),
                 listening_ports,
                 active_connections: active_conns,
-                remote_domains: rem_domains.into_iter().collect(),
+                remote_domains: rem_domains_vec,
                 download_speed: svc_dl_speed,
                 upload_speed: svc_ul_speed,
                 total_session_download: svc_tot_dl,
                 total_session_upload: svc_tot_ul,
+                timeframe_download: svc_tf_dl,
+                timeframe_upload: svc_tf_ul,
             });
         }
-        services_summary.sort_by(|a, b| b.active_connections.cmp(&a.active_connections));
+        services_summary.sort_by(|a, b| {
+            let a_tot = a.timeframe_download + a.timeframe_upload;
+            let b_tot = b.timeframe_download + b.timeframe_upload;
+            b_tot.cmp(&a_tot).then_with(|| b.active_connections.cmp(&a.active_connections))
+        });
 
         // Build Domains Summary list
         let mut domains_summary: Vec<DomainNetworkSummary> = domain_map
@@ -452,6 +805,11 @@ impl NetworkMonitorEngine {
             active_interfaces_count: self.active_interfaces_count.load(Ordering::SeqCst) as usize,
         };
 
+        let mut available_dates = self.history.get_available_dates();
+        if !available_dates.contains(&today_str) {
+            available_dates.insert(0, today_str);
+        }
+
         NetworkMonitorSnapshot {
             connections,
             apps_summary,
@@ -463,6 +821,11 @@ impl NetworkMonitorEngine {
             total_remote_hosts: remote_hosts_set.len(),
             top_consumer_app,
             top_consumer_bytes,
+            timeframe: tf_name,
+            timeframe_label: tf_label,
+            timeframe_total_download,
+            timeframe_total_upload,
+            available_dates,
         }
     }
 
@@ -937,7 +1300,7 @@ fn sample_active_processes_traffic(
     app_traffic: &Arc<RwLock<HashMap<String, AppTrafficStats>>>,
     pid_traffic: &Arc<RwLock<HashMap<u32, PidTrafficSample>>>,
     now: Instant,
-) {
+) -> HashMap<String, (u64, u64)> {
     let proc_map = get_process_name_map();
     let network_pids = get_active_network_pids();
 
@@ -977,6 +1340,7 @@ fn sample_active_processes_traffic(
 
     // Aggregate PID deltas to process names
     let mut app_map = app_traffic.write().unwrap();
+    let mut app_deltas: HashMap<String, (u64, u64)> = HashMap::new();
 
     // Reset current active rates for all known apps to 0 first (in case an app went idle)
     for stats in app_map.values_mut() {
@@ -991,8 +1355,14 @@ fn sample_active_processes_traffic(
             stats.current_upload_rate += w_speed;
             stats.total_session_download += r_speed; // accumulates 1s slice
             stats.total_session_upload += w_speed;
+
+            let entry = app_deltas.entry(proc_name.clone()).or_insert((0, 0));
+            entry.0 += r_speed;
+            entry.1 += w_speed;
         }
     }
+
+    app_deltas
 }
 
 fn sample_process_io(pid: u32) -> Option<(u64, u64)> {

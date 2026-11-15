@@ -3664,9 +3664,49 @@ let netmonSnapshotCache = null;
 let netmonCurrentSubView = "connections"; // "connections", "apps", "services", "domains"
 let netmonSearchFilter = "";
 let netmonCategoryFilter = "all";
+let netmonTimeframe = "session"; // "session", "today", "yesterday", "week", "month", "all", "custom"
+let netmonCustomDate = null;
 let isNetmonLoading = false;
 
 function setupNetMon() {
+  // Timeframe pills (GlassWire date period filter: Day, Week, Month, Session, All)
+  document.querySelectorAll(".timeframe-pill").forEach((pill) => {
+    pill.addEventListener("click", () => {
+      document.querySelectorAll(".timeframe-pill").forEach((p) => p.classList.remove("active"));
+      pill.classList.add("active");
+      netmonTimeframe = pill.getAttribute("data-tf") || "session";
+      netmonCustomDate = null;
+      const dateInput = document.getElementById("input-netmon-custom-date");
+      if (dateInput) dateInput.value = "";
+      document.getElementById("btn-clear-netmon-date")?.classList.add("hidden");
+      pollNetMon(true);
+    });
+  });
+
+  // Custom date picker
+  const inputCustomDate = document.getElementById("input-netmon-custom-date");
+  const btnClearDate = document.getElementById("btn-clear-netmon-date");
+
+  inputCustomDate?.addEventListener("change", (e) => {
+    const val = e.target.value;
+    if (val) {
+      document.querySelectorAll(".timeframe-pill").forEach((p) => p.classList.remove("active"));
+      netmonTimeframe = "custom";
+      netmonCustomDate = val;
+      btnClearDate?.classList.remove("hidden");
+      pollNetMon(true);
+    }
+  });
+
+  btnClearDate?.addEventListener("click", () => {
+    if (inputCustomDate) inputCustomDate.value = "";
+    btnClearDate.classList.add("hidden");
+    netmonTimeframe = "session";
+    netmonCustomDate = null;
+    document.getElementById("tf-pill-session")?.classList.add("active");
+    pollNetMon(true);
+  });
+
   // Sub-view switcher pills
   document.querySelectorAll(".netmon-pill").forEach((pill) => {
     pill.addEventListener("click", () => {
@@ -3724,7 +3764,10 @@ async function pollNetMon(force = false) {
 
   isNetmonLoading = true;
   try {
-    const snapshot = await invoke("get_network_snapshot");
+    const snapshot = await invoke("get_network_snapshot", {
+      timeframe: netmonTimeframe,
+      customDate: netmonCustomDate,
+    });
     if (snapshot) {
       netmonSnapshotCache = snapshot;
       updateNetMonStats(snapshot);
@@ -3740,16 +3783,24 @@ async function pollNetMon(force = false) {
 function updateNetMonStats(snapshot) {
   if (!snapshot) return;
 
+  const label = snapshot.timeframe_label || "Session";
+
   // Throughput Cards
   const elDown = document.getElementById("netmon-stat-download");
   const elUp = document.getElementById("netmon-stat-upload");
   const elTotDown = document.getElementById("netmon-stat-total-down");
   const elTotUp = document.getElementById("netmon-stat-total-up");
+  const elDownLabel = document.getElementById("netmon-stat-down-label");
+  const elUpLabel = document.getElementById("netmon-stat-up-label");
 
   if (elDown) elDown.textContent = `${formatBytes(snapshot.throughput.download_bytes_per_sec)}/s`;
   if (elUp) elUp.textContent = `${formatBytes(snapshot.throughput.upload_bytes_per_sec)}/s`;
-  if (elTotDown) elTotDown.textContent = formatBytes(snapshot.throughput.total_session_download);
-  if (elTotUp) elTotUp.textContent = formatBytes(snapshot.throughput.total_session_upload);
+
+  if (elDownLabel) elDownLabel.textContent = label;
+  if (elUpLabel) elUpLabel.textContent = label;
+
+  if (elTotDown) elTotDown.textContent = formatBytes(snapshot.timeframe_total_download);
+  if (elTotUp) elTotUp.textContent = formatBytes(snapshot.timeframe_total_upload);
 
   // Connection KPIs
   const elTotalConns = document.getElementById("netmon-stat-total-conns");
@@ -3769,13 +3820,19 @@ function updateNetMonStats(snapshot) {
   if (elApps) elApps.textContent = snapshot.apps_summary.length;
   if (elTopConsumer) {
     if (snapshot.top_consumer_app && snapshot.top_consumer_bytes > 0) {
-      elTopConsumer.textContent = `Top: ${snapshot.top_consumer_app} (${formatBytes(snapshot.top_consumer_bytes)})`;
-      elTopConsumer.title = `Highest session data consumer: ${snapshot.top_consumer_app} (${formatBytes(snapshot.top_consumer_bytes)})`;
+      elTopConsumer.textContent = `Top (${label}): ${snapshot.top_consumer_app} (${formatBytes(snapshot.top_consumer_bytes)})`;
+      elTopConsumer.title = `Highest data consumer (${label}): ${snapshot.top_consumer_app} (${formatBytes(snapshot.top_consumer_bytes)})`;
     } else {
-      elTopConsumer.textContent = `Top: -`;
+      elTopConsumer.textContent = `Top (${label}): -`;
       elTopConsumer.title = "";
     }
   }
+
+  // Update table headers with dynamic period
+  const thApps = document.getElementById("th-netmon-apps-usage");
+  if (thApps) thApps.textContent = `${label.toUpperCase()} USAGE (↓ / ↑)`;
+  const thServices = document.getElementById("th-netmon-services-usage");
+  if (thServices) thServices.textContent = `${label.toUpperCase()} USAGE (↓ / ↑)`;
 
   // Badges on Pills
   const bConns = document.getElementById("badge-count-connections");
@@ -3941,7 +3998,7 @@ function renderNetMonApps(apps) {
   });
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="netmon-loading">${q ? "No applications match search filter." : "No active applications with network sockets."}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="netmon-loading">${q ? "No applications match search filter." : "No applications recorded for this period."}</td></tr>`;
     return;
   }
 
@@ -3951,33 +4008,35 @@ function renderNetMonApps(apps) {
       ? `<span class="badge badge-emerald">${escapeHtml(a.service_name)}</span>`
       : `<span style="color: var(--text-dim);">-</span>`;
 
-    const pidsDisplay = a.pids.slice(0, 3).map((p) => `<span class="netmon-tag-pill">${p}</span>`).join(" ") +
-      (a.pids.length > 3 ? ` <span class="netmon-tag-pill">+${a.pids.length - 3}</span>` : "");
+    const pidsDisplay = a.is_active_now
+      ? (a.pids.slice(0, 3).map((p) => `<span class="netmon-tag-pill">${p}</span>`).join(" ") +
+         (a.pids.length > 3 ? ` <span class="netmon-tag-pill">+${a.pids.length - 3}</span>` : ""))
+      : `<span class="badge badge-subtle" style="font-size: 10px;">Closed</span>`;
 
     const domainsDisplay = a.remote_domains.length > 0
       ? a.remote_domains.slice(0, 5).map((d) => `<span class="netmon-tag-pill accent">${escapeHtml(d)}</span>`).join(" ") +
         (a.remote_domains.length > 5 ? ` <span class="netmon-tag-pill">+${a.remote_domains.length - 5} more</span>` : "")
-      : `<span style="color: var(--text-dim); font-size: 11px;">Local Only</span>`;
+      : `<span style="color: var(--text-dim); font-size: 11px;">-</span>`;
 
     const firstPid = a.pids.length > 0 ? a.pids[0] : 0;
+    const canKill = a.is_active_now && firstPid > 4;
 
     html += `
-      <tr>
+      <tr style="${!a.is_active_now ? 'opacity: 0.75;' : ''}">
         <td><strong class="netmon-proc-name">${escapeHtml(a.process_name)}</strong></td>
         <td>${pidsDisplay}</td>
         <td>${formatNetSpeedPills(a.download_speed, a.upload_speed)}</td>
-        <td>${formatNetTotalPills(a.total_session_download, a.total_session_upload)}</td>
+        <td>${formatNetTotalPills(a.timeframe_download, a.timeframe_upload)}</td>
         <td>
           <strong style="color: var(--text-main); font-family: var(--font-mono);">${a.total_connections}</strong>
-          <span class="badge-state-est" style="font-size: 10px; margin-left: 3px;" title="Established">${a.established_count}</span>
-          <span class="badge-state-listen" style="font-size: 10px; margin-left: 2px;" title="Listening">${a.listening_count}</span>
+          ${a.is_active_now ? `<span class="badge-state-est" style="font-size: 10px; margin-left: 3px;" title="Established">${a.established_count}</span> <span class="badge-state-listen" style="font-size: 10px; margin-left: 2px;" title="Listening">${a.listening_count}</span>` : ''}
         </td>
         <td>${serviceBadge}</td>
         <td>${domainsDisplay}</td>
         <td style="text-align: right;">
-          ${firstPid > 4 ? `
+          ${canKill ? `
             <button class="netmon-action-btn" onclick="killProcessFromNetMon(${firstPid}, '${escapeHtml(a.process_name)}')" title="Terminate ${escapeHtml(a.process_name)}">⚡ Kill</button>
-          ` : `<span style="color: var(--text-dim); font-size: 10px;">OS</span>`}
+          ` : `<span style="color: var(--text-dim); font-size: 10px;">${a.is_active_now ? 'OS' : '-'}</span>`}
         </td>
       </tr>
     `;
@@ -4026,7 +4085,7 @@ function renderNetMonServices(services) {
         <td>${statusBadge}</td>
         <td><code class="font-mono">${s.pid ? s.pid : "-"}</code></td>
         <td>${formatNetSpeedPills(s.download_speed, s.upload_speed)}</td>
-        <td>${formatNetTotalPills(s.total_session_download, s.total_session_upload)}</td>
+        <td>${formatNetTotalPills(s.timeframe_download, s.timeframe_upload)}</td>
         <td>${portsDisplay}</td>
         <td><strong style="color: var(--text-main); font-family: var(--font-mono);">${s.active_connections}</strong></td>
         <td>${domainsDisplay}</td>

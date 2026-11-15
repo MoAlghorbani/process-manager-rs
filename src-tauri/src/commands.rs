@@ -882,6 +882,16 @@ pub fn save_media_workspace(path: String) -> Result<(), String> {
 // ==========================================
 
 #[tauri::command]
-pub fn get_network_snapshot(state: State<'_, AppState>) -> crate::netmon::NetworkMonitorSnapshot {
-    state.netmon.get_snapshot()
+pub fn get_network_snapshot(
+    state: State<'_, AppState>,
+    timeframe: Option<String>,
+    custom_date: Option<String>,
+) -> crate::netmon::NetworkMonitorSnapshot {
+    state.netmon.get_snapshot(timeframe.as_deref(), custom_date.as_deref())
+}
+
+#[tauri::command]
+pub fn clear_network_history(state: State<'_, AppState>) -> Result<(), String> {
+    state.netmon.clear_history();
+    Ok(())
 }
