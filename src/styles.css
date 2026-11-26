@@ -67,54 +67,66 @@ body {
   font-family: var(--font-sans);
   background-color: var(--bg-base);
   color: var(--text-main);
-  min-height: 100vh;
+  height: 100vh;
   overflow: hidden;
   display: flex;
-  flex-direction: column;
-  
+  flex-direction: row;
 }
 
 /* ======================================================== */
-/* 1. TOP HEADER & NAVIGATION                               */
+/* 1. APP SIDEBAR & NAVIGATION WITH SCROLL                  */
 /* ======================================================== */
 
-.app-header {
-  height: 56px;
-  background: #101010;
-  border-bottom: 1px solid var(--border-subtle);
-  
+.app-sidebar {
+  width: 220px;
+  min-width: 220px;
+  max-width: 220px;
+  height: 100vh;
+  background: #0d0d0d;
+  border-right: 1px solid var(--border-subtle);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
+  flex-direction: column;
   flex-shrink: 0;
   z-index: 100;
+  box-sizing: border-box;
+}
+
+.sidebar-header {
+  padding: 16px 14px 14px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+  background: #111111;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .brand-badge {
   background: var(--accent-red);
   color: #fff;
   font-weight: 800;
-  font-size: 13px;
-  padding: 4px 8px;
+  font-size: 12px;
+  padding: 4px 7px;
   border-radius: var(--radius-sm);
   box-shadow: none;
+  letter-spacing: 0.5px;
 }
 
 .brand-info h1 {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: -0.3px;
+  letter-spacing: -0.2px;
+  line-height: 1.2;
 }
 
 .brand-info .subtext {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-muted);
 }
 
@@ -135,6 +147,9 @@ body {
   border: 1px solid rgba(245, 158, 11, 0.3);
   cursor: pointer;
   transition: all 0.2s;
+  align-self: flex-start;
+  font-size: 10px;
+  padding: 2px 7px;
 }
 
 .badge-admin:hover {
@@ -164,38 +179,120 @@ body {
   color: var(--text-muted);
 }
 
-.nav-tabs {
+.sidebar-nav-container {
+  flex: 1;
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 10px 0 6px 0;
+}
+
+.sidebar-section-title {
+  padding: 4px 14px 6px 14px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.nav-tabs {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.nav-tabs::-webkit-scrollbar {
+  width: 5px;
+}
+.nav-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+.nav-tabs::-webkit-scrollbar-thumb {
+  background: #202020;
+  border-radius: 4px;
+}
+.nav-tabs::-webkit-scrollbar-thumb:hover {
+  background: #333333;
 }
 
 .nav-tab {
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
-  padding: 8px 14px;
+  padding: 8px 10px;
   border-radius: var(--radius-md);
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 6px;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.nav-tab .tab-icon {
+  font-size: 14px;
+  width: 18px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.nav-tab .tab-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nav-tab:hover {
   color: var(--text-main);
   background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.04);
 }
 
 .nav-tab.active {
   color: #ffffff;
   background: var(--accent-red);
-  border: 1px solid var(--accent-red);
-  box-shadow: none;
+  border-color: var(--accent-red);
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.35);
   font-weight: 700;
+}
+
+.nav-tab.active .tab-icon {
+  transform: scale(1.05);
+}
+
+.nav-tab .chat-tab-badge {
+  margin-left: auto;
+}
+
+.sidebar-footer {
+  padding: 10px 10px 12px 10px;
+  border-top: 1px solid var(--border-subtle);
+  background: #0d0d0d;
+  flex-shrink: 0;
+}
+
+.sidebar-footer .btn-storage-pill {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  justify-content: flex-start;
+  padding: 7px 10px;
+  font-size: 11.5px;
 }
 
 /* ======================================================== */
@@ -207,6 +304,8 @@ body {
   position: relative;
   overflow: hidden;
   display: flex;
+  height: 100vh;
+  min-width: 0;
 }
 
 .tab-pane {
