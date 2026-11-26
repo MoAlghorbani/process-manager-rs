@@ -1,0 +1,42 @@
+{
+  "days": {
+    "2026-11-26": {
+      "total_download": 0,
+      "total_upload": 0,
+      "apps": {
+        "chrome.exe": {
+          "download": 48620636,
+          "upload": 55113369
+        },
+        "claude.exe": {
+          "download": 10452,
+          "upload": 10743
+        },
+        "pm_rs.exe": {
+          "download": 312012,
+          "upload": 544379
+        },
+        "ECAgent.exe": {
+          "download": 47748,
+          "upload": 3056
+        },
+        "Antigravity IDE.exe": {
+          "download": 1810830,
+          "upload": 14881265
+        },
+        "cloudflared.exe": {
+          "download": 17568,
+          "upload": 6426
+        },
+        "msedgewebview2.exe": {
+          "download": 9250770,
+          "upload": 5717456
+        },
+        "agy.exe": {
+          "download": 28456,
+          "upload": 13006
+        }
+      }
+    }
+  }
+}

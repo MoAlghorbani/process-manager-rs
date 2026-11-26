@@ -1,0 +1,9 @@
+[
+  {
+    "id": "2f10d4",
+    "name": "odoo",
+    "local_url": "http://localhost:8081",
+    "auto_start": true,
+    "created_at": "2026-11-26T19:40:36.761779200+00:00"
+  }
+]

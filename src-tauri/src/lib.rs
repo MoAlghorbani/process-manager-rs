@@ -10,6 +10,7 @@ pub mod media;
 pub mod models;
 pub mod netmon;
 pub mod todo;
+pub mod tunnel;
 pub mod win32;
 pub mod ytdl;
 
@@ -23,6 +24,7 @@ use crate::manager::ProcessManager;
 use crate::media::MediaServer;
 use crate::netmon::NetworkMonitorEngine;
 use crate::todo::TodoStore;
+use crate::tunnel::TunnelEngine;
 use crate::ytdl::YtDlpEngine;
 use std::sync::Arc;
 use tauri::Emitter;
@@ -39,6 +41,7 @@ pub fn run() {
     let hotkey_mgr = Arc::new(HotkeyManager::new(pm.clone(), jiggler.clone()));
     let media_server = Arc::new(MediaServer::new());
     let netmon = Arc::new(NetworkMonitorEngine::new(pm.clone()));
+    let tunnel_engine = Arc::new(TunnelEngine::new());
 
     // Start background watchers & hotkey listener
     clipboard_watcher.start();
@@ -47,6 +50,7 @@ pub fn run() {
     hotkey_mgr.start();
     media_server.start();
     netmon.start();
+    tunnel_engine.start_auto_start_servers();
 
     let state = AppState {
         pm: pm.clone(),
@@ -59,6 +63,7 @@ pub fn run() {
         hotkey_mgr: hotkey_mgr.clone(),
         media_server: media_server.clone(),
         netmon: netmon.clone(),
+        tunnel_engine: tunnel_engine.clone(),
     };
 
     tauri::Builder::default()
@@ -191,6 +196,19 @@ pub fn run() {
             // Network Activity Monitor
             commands::get_network_snapshot,
             commands::clear_network_history,
+            // Public Server (Cloudflared Tunnel)
+            commands::get_cloudflared_status,
+            commands::list_public_servers,
+            commands::add_public_server,
+            commands::update_public_server,
+            commands::delete_public_server,
+            commands::start_public_server,
+            commands::stop_public_server,
+            commands::restart_public_server,
+            commands::start_all_public_servers,
+            commands::stop_all_public_servers,
+            commands::get_public_server_logs,
+            commands::clear_public_server_logs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Process Manager application");
