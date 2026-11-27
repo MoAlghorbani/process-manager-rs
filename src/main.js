@@ -39,6 +39,7 @@ document.addEventListener("DOMContentLoaded", () => {
   setupLanChat();
   setupMedia();
   setupNetMon();
+  setupPublicServers();
 
   // Background Telemetry Tickers
   setInterval(pollServices, 1500);
@@ -47,6 +48,11 @@ document.addEventListener("DOMContentLoaded", () => {
   setInterval(pollDownloader, 1000);
   setInterval(pollChatMessages, 1200);
   setInterval(pollChatPeers, 3000);
+  setInterval(() => {
+    if (currentTab === "tab-public-server") {
+      pollPublicServers();
+    }
+  }, 2000);
   setInterval(() => {
     if (currentTab === "tab-netmon") {
       const chk = document.getElementById("chk-netmon-autorefresh");
@@ -116,6 +122,8 @@ function setupNavigation() {
         loadMediaTab();
       } else if (currentTab === "tab-netmon") {
         loadNetMonTab();
+      } else if (currentTab === "tab-public-server") {
+        loadPublicServersTab();
       }
     });
   });
@@ -4166,3 +4174,463 @@ async function killProcessFromNetMon(pid, procName) {
 window.killProcessFromNetMon = killProcessFromNetMon;
 window.loadNetMonTab = loadNetMonTab;
 window.pollNetMon = pollNetMon;
+
+// ========================================================
+// 12. PUBLIC SERVER (CLOUDFLARED TUNNELS) CONTROLLER
+// ========================================================
+
+let publicServersList = [];
+let activeViewingLogServerId = null;
+let publicServerLogsInterval = null;
+let publicServerSearchQuery = "";
+
+function setupPublicServers() {
+  const modalAdd = document.getElementById("modal-add-public-server");
+  const modalLogs = document.getElementById("modal-public-server-logs");
+
+  const openAddModal = (editItem = null) => {
+    const feedback = document.getElementById("public-server-add-feedback");
+    if (feedback) feedback.classList.add("hidden");
+
+    if (editItem) {
+      document.getElementById("modal-public-server-title").textContent = "✏️ Edit Public Server";
+      document.getElementById("input-public-server-id").value = editItem.id;
+      document.getElementById("input-public-server-url").value = editItem.local_url;
+      document.getElementById("input-public-server-name").value = editItem.name;
+      document.getElementById("chk-public-server-autostart").checked = editItem.auto_start;
+      document.getElementById("btn-save-public-server").textContent = "Save Changes";
+    } else {
+      document.getElementById("modal-public-server-title").textContent = "🌐 Add Public Server";
+      document.getElementById("input-public-server-id").value = "";
+      document.getElementById("input-public-server-url").value = "http://localhost:8080";
+      document.getElementById("input-public-server-name").value = "";
+      document.getElementById("chk-public-server-autostart").checked = true;
+      document.getElementById("btn-save-public-server").textContent = "Start & Save Server";
+    }
+
+    if (modalAdd) modalAdd.classList.remove("hidden");
+    setTimeout(() => {
+      const urlInput = document.getElementById("input-public-server-url");
+      if (urlInput) {
+        urlInput.focus();
+        urlInput.select();
+      }
+    }, 50);
+  };
+
+  const closeAddModal = () => {
+    if (modalAdd) modalAdd.classList.add("hidden");
+  };
+
+  const btnOpenAdd = document.getElementById("btn-open-add-public-server");
+  if (btnOpenAdd) btnOpenAdd.addEventListener("click", () => openAddModal());
+
+  const btnEmptyAdd = document.getElementById("btn-empty-add-public-server");
+  if (btnEmptyAdd) btnEmptyAdd.addEventListener("click", () => openAddModal());
+
+  const btnCloseModal = document.getElementById("btn-close-public-server-modal");
+  if (btnCloseModal) btnCloseModal.addEventListener("click", closeAddModal);
+
+  const btnCancelModal = document.getElementById("btn-cancel-public-server");
+  if (btnCancelModal) btnCancelModal.addEventListener("click", closeAddModal);
+
+  // Close modals on overlay backdrop click
+  if (modalAdd) {
+    modalAdd.addEventListener("click", (e) => {
+      if (e.target === modalAdd) closeAddModal();
+    });
+  }
+
+  // Save server
+  const btnSave = document.getElementById("btn-save-public-server");
+  if (btnSave) {
+    btnSave.addEventListener("click", async () => {
+      const id = document.getElementById("input-public-server-id").value.trim();
+      const localUrl = document.getElementById("input-public-server-url").value.trim();
+      const name = document.getElementById("input-public-server-name").value.trim();
+      const autoStart = document.getElementById("chk-public-server-autostart").checked;
+      const feedback = document.getElementById("public-server-add-feedback");
+
+      if (!localUrl) {
+        if (feedback) {
+          feedback.textContent = "Please provide a valid local server address (e.g. http://localhost:8080)";
+          feedback.className = "public-server-feedback error";
+          feedback.classList.remove("hidden");
+        }
+        return;
+      }
+
+      btnSave.disabled = true;
+      try {
+        if (id) {
+          await invoke("update_public_server", { id, name, localUrl, autoStart });
+          showToast(`Server updated successfully`, "success");
+        } else {
+          await invoke("add_public_server", { name, localUrl, autoStart });
+          showToast(`Tunnel started for ${localUrl}`, "success");
+        }
+        closeAddModal();
+        await pollPublicServers(true);
+      } catch (err) {
+        if (feedback) {
+          feedback.textContent = String(err);
+          feedback.className = "public-server-feedback error";
+          feedback.classList.remove("hidden");
+        }
+      } finally {
+        btnSave.disabled = false;
+      }
+    });
+  }
+
+  // Toolbar Actions
+  const btnRefresh = document.getElementById("btn-refresh-public-servers");
+  if (btnRefresh) {
+    btnRefresh.addEventListener("click", () => {
+      pollPublicServers(true);
+      checkCloudflaredStatus();
+    });
+  }
+
+  const btnStartAll = document.getElementById("btn-start-all-public-servers");
+  if (btnStartAll) {
+    btnStartAll.addEventListener("click", async () => {
+      const count = await invoke("start_all_public_servers");
+      showToast(`Started ${count} tunnels`, "info");
+      await pollPublicServers(true);
+    });
+  }
+
+  const btnStopAll = document.getElementById("btn-stop-all-public-servers");
+  if (btnStopAll) {
+    btnStopAll.addEventListener("click", async () => {
+      const count = await invoke("stop_all_public_servers");
+      showToast(`Stopped ${count} tunnels`, "info");
+      await pollPublicServers(true);
+    });
+  }
+
+  const searchInput = document.getElementById("input-search-public-servers");
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => {
+      publicServerSearchQuery = e.target.value.toLowerCase().trim();
+      renderPublicServersList();
+    });
+  }
+
+  // Logs modal controls
+  const closeLogsModal = () => {
+    if (modalLogs) modalLogs.classList.add("hidden");
+    activeViewingLogServerId = null;
+    if (publicServerLogsInterval) {
+      clearInterval(publicServerLogsInterval);
+      publicServerLogsInterval = null;
+    }
+  };
+
+  const btnCloseLogs = document.getElementById("btn-close-public-server-logs");
+  if (btnCloseLogs) btnCloseLogs.addEventListener("click", closeLogsModal);
+
+  const btnDoneLogs = document.getElementById("btn-done-tunnel-logs");
+  if (btnDoneLogs) btnDoneLogs.addEventListener("click", closeLogsModal);
+
+  if (modalLogs) {
+    modalLogs.addEventListener("click", (e) => {
+      if (e.target === modalLogs) closeLogsModal();
+    });
+  }
+
+  const btnCopyLogs = document.getElementById("btn-copy-tunnel-logs");
+  if (btnCopyLogs) {
+    btnCopyLogs.addEventListener("click", async () => {
+      const pre = document.getElementById("pre-tunnel-logs");
+      if (pre && pre.textContent) {
+        await invoke("copy_to_clipboard", { text: pre.textContent });
+        showToast("Tunnel logs copied to clipboard!", "success");
+      }
+    });
+  }
+
+  const btnClearLogs = document.getElementById("btn-clear-tunnel-logs");
+  if (btnClearLogs) {
+    btnClearLogs.addEventListener("click", async () => {
+      if (activeViewingLogServerId) {
+        await invoke("clear_public_server_logs", { id: activeViewingLogServerId });
+        const pre = document.getElementById("pre-tunnel-logs");
+        if (pre) pre.textContent = "";
+        showToast("Tunnel logs cleared", "info");
+      }
+    });
+  }
+
+  window.openEditPublicServer = (id) => {
+    const s = publicServersList.find((item) => item.id === id);
+    if (s) openAddModal(s);
+  };
+}
+
+async function checkCloudflaredStatus() {
+  const lbl = document.getElementById("lbl-cloudflared-status");
+  const dot = document.getElementById("dot-cloudflared-status");
+  const banner = document.getElementById("banner-cloudflared-missing");
+
+  try {
+    const status = await invoke("get_cloudflared_status");
+    if (status && status.installed) {
+      if (lbl) lbl.textContent = `cloudflared ${status.version || "Installed"}`;
+      if (dot) {
+        dot.className = "cf-dot online";
+      }
+      if (banner) banner.classList.add("hidden");
+    } else {
+      if (lbl) lbl.textContent = "cloudflared: Missing";
+      if (dot) {
+        dot.className = "cf-dot error";
+      }
+      if (banner) banner.classList.remove("hidden");
+    }
+  } catch (err) {
+    console.error("Failed to check cloudflared status:", err);
+  }
+}
+
+async function loadPublicServersTab() {
+  await checkCloudflaredStatus();
+  await pollPublicServers(true);
+}
+
+async function pollPublicServers(force = false) {
+  try {
+    const servers = await invoke("list_public_servers");
+    if (Array.isArray(servers)) {
+      publicServersList = servers;
+      renderPublicServersList();
+    }
+  } catch (err) {
+    console.error("Failed to list public servers:", err);
+  }
+}
+
+function renderPublicServersList() {
+  const container = document.getElementById("public-servers-list");
+  const emptyState = document.getElementById("empty-state-public-servers");
+  if (!container) return;
+
+  let items = publicServersList;
+  if (publicServerSearchQuery) {
+    items = items.filter(
+      (s) =>
+        (s.name && s.name.toLowerCase().includes(publicServerSearchQuery)) ||
+        (s.local_url && s.local_url.toLowerCase().includes(publicServerSearchQuery)) ||
+        (s.public_url && s.public_url.toLowerCase().includes(publicServerSearchQuery))
+    );
+  }
+
+  if (items.length === 0) {
+    container.innerHTML = "";
+    if (emptyState) emptyState.classList.remove("hidden");
+    return;
+  }
+
+  if (emptyState) emptyState.classList.add("hidden");
+
+  let html = "";
+  for (const s of items) {
+    const statusClass = s.status || "stopped";
+    const statusLabel =
+      s.status === "online"
+        ? "Online"
+        : s.status === "connecting"
+        ? "Connecting..."
+        : s.status === "error"
+        ? "Error"
+        : "Stopped";
+
+    let urlBoxContent = "";
+    if (s.status === "online" && s.public_url) {
+      urlBoxContent = `
+        <a href="${escapeHtml(s.public_url)}" class="public-url-text" target="_blank" onclick="event.preventDefault(); window.openExternalPublicUrl('${escapeHtml(s.public_url)}');" title="Open public URL in browser">
+          <span>🌐</span> ${escapeHtml(s.public_url)}
+        </a>
+        <div class="public-url-actions">
+          <button class="btn btn-secondary btn-icon-sm" onclick="window.copyPublicUrl('${escapeHtml(s.public_url)}')" title="Copy Public URL">
+            📋 Copy
+          </button>
+          <button class="btn btn-secondary btn-icon-sm" onclick="window.openExternalPublicUrl('${escapeHtml(s.public_url)}')" title="Open in Browser">
+            ↗ Open
+          </button>
+        </div>
+      `;
+    } else if (s.status === "connecting") {
+      urlBoxContent = `
+        <div class="public-url-connecting">
+          <span class="cf-dot connecting"></span>
+          <span>Acquiring public tunnel URL from Cloudflare...</span>
+        </div>
+      `;
+    } else if (s.status === "error") {
+      urlBoxContent = `
+        <div class="public-url-error" title="${escapeHtml(s.error_message || "Tunnel error")}">
+          <span>⚠️</span> ${escapeHtml(s.error_message || "Tunnel process exited with error")}
+        </div>
+      `;
+    } else {
+      urlBoxContent = `
+        <div class="public-url-stopped">
+          <span>Tunnel is stopped. Click Start to expose server.</span>
+        </div>
+      `;
+    }
+
+    const uptimeStr = s.uptime_seconds > 0 ? formatServerUptime(s.uptime_seconds) : "";
+
+    const toggleActionBtn =
+      s.status === "online" || s.status === "connecting"
+        ? `<button class="btn btn-secondary btn-xs" onclick="window.stopPublicServer('${s.id}')" title="Stop tunnel">⏹ Stop</button>`
+        : `<button class="btn btn-primary btn-xs" onclick="window.startPublicServer('${s.id}')" title="Start tunnel">▶ Start</button>`;
+
+    html += `
+      <div class="server-card ${statusClass}" data-id="${s.id}">
+        <div class="server-card-header">
+          <div class="server-card-title-wrap">
+            <span class="server-card-name" title="${escapeHtml(s.name)}">
+              <span>🚀</span> ${escapeHtml(s.name)}
+            </span>
+            <span class="server-card-local-url" title="Local address">
+              <span>🏠</span> ${escapeHtml(s.local_url)}
+            </span>
+          </div>
+          <span class="server-badge ${statusClass}">
+            ${statusLabel}
+          </span>
+        </div>
+
+        <div class="public-url-box">
+          ${urlBoxContent}
+        </div>
+
+        <div class="server-card-footer">
+          <div class="server-meta">
+            ${s.pid ? `<span>PID: <strong>${s.pid}</strong></span>` : ""}
+            ${uptimeStr ? `<span>Up: <strong>${uptimeStr}</strong></span>` : ""}
+            ${s.auto_start ? `<span title="Auto-start enabled">⚡ Auto</span>` : ""}
+          </div>
+          <div class="server-card-actions">
+            ${toggleActionBtn}
+            <button class="btn btn-secondary btn-xs" onclick="window.restartPublicServer('${s.id}')" title="Restart tunnel">🔄</button>
+            <button class="btn btn-secondary btn-xs" onclick="window.viewPublicServerLogs('${s.id}', '${escapeHtml(s.name)}')" title="View cloudflared logs">📋 Logs</button>
+            <button class="btn btn-secondary btn-xs" onclick="window.openEditPublicServer('${s.id}')" title="Edit server config">✏️</button>
+            <button class="btn btn-danger btn-xs" onclick="window.deletePublicServer('${s.id}', '${escapeHtml(s.name)}')" title="Delete server">🗑</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  container.innerHTML = html;
+}
+
+function formatServerUptime(totalSeconds) {
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return `${h}h ${remM}m`;
+}
+
+window.startPublicServer = async (id) => {
+  try {
+    await invoke("start_public_server", { id });
+    showToast("Starting Cloudflare tunnel...", "info");
+    await pollPublicServers(true);
+  } catch (err) {
+    showToast(`Error starting tunnel: ${err}`, "error");
+  }
+};
+
+window.stopPublicServer = async (id) => {
+  try {
+    await invoke("stop_public_server", { id });
+    showToast("Tunnel stopped", "info");
+    await pollPublicServers(true);
+  } catch (err) {
+    showToast(`Error stopping tunnel: ${err}`, "error");
+  }
+};
+
+window.restartPublicServer = async (id) => {
+  try {
+    showToast("Restarting tunnel...", "info");
+    await invoke("restart_public_server", { id });
+    await pollPublicServers(true);
+  } catch (err) {
+    showToast(`Error restarting tunnel: ${err}`, "error");
+  }
+};
+
+window.deletePublicServer = async (id, name) => {
+  if (confirm(`Are you sure you want to delete public server '${name}'? The tunnel will be stopped.`)) {
+    try {
+      await invoke("delete_public_server", { id });
+      showToast(`Server '${name}' deleted`, "info");
+      await pollPublicServers(true);
+    } catch (err) {
+      showToast(`Error deleting server: ${err}`, "error");
+    }
+  }
+};
+
+window.copyPublicUrl = async (url) => {
+  if (!url) return;
+  try {
+    await invoke("copy_to_clipboard", { text: url });
+    showToast("Public URL copied to clipboard!", "success");
+  } catch (err) {
+    navigator.clipboard?.writeText(url);
+    showToast("Public URL copied!", "success");
+  }
+};
+
+window.openExternalPublicUrl = async (url) => {
+  if (!url) return;
+  try {
+    await invoke("open_url", { url });
+  } catch (err) {
+    console.error("Failed to open URL:", err);
+  }
+};
+
+window.viewPublicServerLogs = async (id, name) => {
+  activeViewingLogServerId = id;
+  const modalLogs = document.getElementById("modal-public-server-logs");
+  const title = document.getElementById("modal-public-server-logs-title");
+  const subtitle = document.getElementById("modal-public-server-logs-subtitle");
+  const pre = document.getElementById("pre-tunnel-logs");
+
+  if (title) title.textContent = `📋 Logs: ${name}`;
+  if (subtitle) subtitle.textContent = `cloudflared stdout / stderr live feed`;
+  if (modalLogs) modalLogs.classList.remove("hidden");
+
+  const refreshLogs = async () => {
+    if (!activeViewingLogServerId) return;
+    try {
+      const logs = await invoke("get_public_server_logs", { id: activeViewingLogServerId });
+      if (pre) {
+        pre.textContent = logs || "(No logs captured yet)";
+        const container = document.getElementById("tunnel-logs-content");
+        if (container) container.scrollTop = container.scrollHeight;
+      }
+    } catch (err) {
+      if (pre) pre.textContent = `Error fetching logs: ${err}`;
+    }
+  };
+
+  await refreshLogs();
+  if (publicServerLogsInterval) clearInterval(publicServerLogsInterval);
+  publicServerLogsInterval = setInterval(refreshLogs, 1500);
+};
+
+window.loadPublicServersTab = loadPublicServersTab;
+window.pollPublicServers = pollPublicServers;

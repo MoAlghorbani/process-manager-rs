@@ -3,11 +3,13 @@ use crate::clipboard::ClipboardWatcher;
 use crate::credentials::CredentialStore;
 use crate::manager::{save_configured_data_dir, ProcessManager};
 use crate::models::{
-    ChatConfig, ChatMessage, ClipboardItem, CredentialItem, DataStorageInfo, DownloadItem,
-    FileTransferInfo, JigglerConfig, JigglerStats, ManagerSummary, PeerInfo, PickedFileInfo,
-    ServiceConfig, TodoItem, VideoMetadata, YtDlpConfig,
+    ChatConfig, ChatMessage, ClipboardItem, CloudflaredStatus, CredentialItem, DataStorageInfo,
+    DownloadItem, FileTransferInfo, JigglerConfig, JigglerStats, ManagerSummary, PeerInfo,
+    PickedFileInfo, PublicServerConfig, PublicServerStatus, ServiceConfig, TodoItem,
+    VideoMetadata, YtDlpConfig,
 };
 use crate::todo::TodoStore;
+use crate::tunnel::TunnelEngine;
 use crate::win32::request_admin_elevation;
 use crate::ytdl::YtDlpEngine;
 use chrono::{DateTime, Utc};
@@ -27,6 +29,7 @@ pub struct AppState {
     pub hotkey_mgr: Arc<crate::hotkeys::HotkeyManager>,
     pub media_server: Arc<crate::media::MediaServer>,
     pub netmon: Arc<crate::netmon::NetworkMonitorEngine>,
+    pub tunnel_engine: Arc<TunnelEngine>,
 }
 
 // ==========================================
@@ -549,6 +552,7 @@ fn inspect_dir_info(dir: &Path) -> DataStorageInfo {
     let ytdl_file = dir.join("ytdl_config.json");
     let downloads_file = dir.join("downloads.json");
     let chat_file = dir.join("chat_history.json");
+    let public_servers_file = dir.join("public_servers.json");
 
     let has_services = services_file.exists();
     let has_todos = todos_file.exists();
@@ -557,6 +561,7 @@ fn inspect_dir_info(dir: &Path) -> DataStorageInfo {
     let has_jiggler = jiggler_file.exists();
     let has_downloader = ytdl_file.exists() || downloads_file.exists();
     let has_chat = chat_file.exists();
+    let has_public_servers = public_servers_file.exists();
 
     let mut services_count = 0;
     if has_services {
@@ -603,6 +608,15 @@ fn inspect_dir_info(dir: &Path) -> DataStorageInfo {
         }
     }
 
+    let mut public_servers_count = 0;
+    if has_public_servers {
+        if let Ok(c) = std::fs::read_to_string(&public_servers_file) {
+            if let Ok(list) = serde_json::from_str::<Vec<PublicServerConfig>>(&c) {
+                public_servers_count = list.len();
+            }
+        }
+    }
+
     DataStorageInfo {
         current_dir: dir.to_string_lossy().to_string(),
         has_services,
@@ -612,11 +626,13 @@ fn inspect_dir_info(dir: &Path) -> DataStorageInfo {
         has_jiggler,
         has_downloader,
         has_chat,
+        has_public_servers,
         services_count,
         todos_count,
         credentials_count,
         clips_count,
         messages_count,
+        public_servers_count,
     }
 }
 
@@ -702,6 +718,7 @@ pub fn set_storage_dir(
     state.jiggler.reload_from_dir(target);
     state.ytdl_engine.reload_from_dir(target);
     state.chat_engine.reload_from_dir(target);
+    state.tunnel_engine.reload_from_dir(target);
 
     Ok(inspect_dir_info(target))
 }
@@ -894,4 +911,79 @@ pub fn get_network_snapshot(
 pub fn clear_network_history(state: State<'_, AppState>) -> Result<(), String> {
     state.netmon.clear_history();
     Ok(())
+}
+
+// ==========================================
+// 10. Public Server (Cloudflared Tunnel) Commands
+// ==========================================
+
+#[tauri::command]
+pub fn get_cloudflared_status(state: State<'_, AppState>) -> CloudflaredStatus {
+    state.tunnel_engine.get_cloudflared_status()
+}
+
+#[tauri::command]
+pub fn list_public_servers(state: State<'_, AppState>) -> Vec<PublicServerStatus> {
+    state.tunnel_engine.list_servers()
+}
+
+#[tauri::command]
+pub fn add_public_server(
+    name: String,
+    local_url: String,
+    auto_start: bool,
+    state: State<'_, AppState>,
+) -> Result<PublicServerStatus, String> {
+    state.tunnel_engine.add_server(name, local_url, auto_start)
+}
+
+#[tauri::command]
+pub fn update_public_server(
+    id: String,
+    name: String,
+    local_url: String,
+    auto_start: bool,
+    state: State<'_, AppState>,
+) -> Result<PublicServerStatus, String> {
+    state.tunnel_engine.update_server(&id, name, local_url, auto_start)
+}
+
+#[tauri::command]
+pub fn delete_public_server(id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state.tunnel_engine.delete_server(&id)
+}
+
+#[tauri::command]
+pub fn start_public_server(id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state.tunnel_engine.start_server(&id)
+}
+
+#[tauri::command]
+pub fn stop_public_server(id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state.tunnel_engine.stop_server(&id)
+}
+
+#[tauri::command]
+pub fn restart_public_server(id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state.tunnel_engine.restart_server(&id)
+}
+
+#[tauri::command]
+pub fn start_all_public_servers(state: State<'_, AppState>) -> usize {
+    state.tunnel_engine.start_all()
+}
+
+#[tauri::command]
+pub fn stop_all_public_servers(state: State<'_, AppState>) -> usize {
+    state.tunnel_engine.stop_all()
+}
+
+#[tauri::command]
+pub fn get_public_server_logs(id: String, state: State<'_, AppState>) -> Result<String, String> {
+    state.tunnel_engine.get_logs(&id)
+}
+
+#[tauri::command]
+pub fn clear_public_server_logs(id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state.tunnel_engine.clear_logs(&id)
 }

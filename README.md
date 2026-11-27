@@ -7,7 +7,7 @@ A high-performance, native Windows desktop supervisor, task manager, and local n
 - **Desktop Engine:** Tauri v2 (native Windows WebView2 hardware acceleration)
 - **GUI Frontend:** Vanilla HTML5, CSS3 (Solid Dark Black, Neutral Gray, and Crimson Red flat theme with zero gradients), and Vanilla JS (`src/`)
 - **Binary Output:** `pm_rs.exe` (Lightweight ~6.4 MB standalone executable with embedded Web GUI and zero bloat).
-- **Data Compatibility:** 100% interoperable with `services.json`, `todos.json`, `credentials.json`, `clipboard_history.json`, `ytdl_config.json`, `downloads.json`, `jiggler_config.json`, `chat_history.json`, and `chat_config.json`.
+- **Data Compatibility:** 100% interoperable with `services.json`, `todos.json`, `credentials.json`, `clipboard_history.json`, `ytdl_config.json`, `downloads.json`, `jiggler_config.json`, `chat_history.json`, `chat_config.json`, and `public_servers.json`.
 
 ---
 
@@ -85,6 +85,14 @@ A high-performance, native Windows desktop supervisor, task manager, and local n
   - `jiggler_config.json`, `ytdl_config.json`, `downloads.json`
 - **Instant Hot-Reload:** Switches directories in memory and reloads all stores without restarting the app or killing running services.
 - **Automatic Migration:** Offers to copy current files over if the target folder is empty or missing configurations.
+
+### 8. ☁️ Public Server & Cloudflare Tunnels (`tunnel.rs`)
+- **Instant Public Web Expose:** Turn any local server (`http://localhost:8080`, `127.0.0.1:3000`) into a high-speed, secure public URL (`https://*.trycloudflare.com`) in seconds via `cloudflared`.
+- **Multi-Server Concurrency:** Manage multiple public servers simultaneously with isolated background tunnel processes.
+- **Kernel Job Object Safety:** Each `cloudflared` process is bound to a native Windows Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) to prevent orphaned tunnel processes on stop or application close.
+- **Live Streamed Console Logs:** View real-time `cloudflared` stdout/stderr diagnostic feeds directly in the UI.
+- **1-Click Copy & Browser Launch:** Quick clipboard copying of the public trycloudflare.com URL and instant browser opening.
+- **Persistent State:** Saves servers in `public_servers.json` with hot-reload and auto-start support.
 
 ---
 

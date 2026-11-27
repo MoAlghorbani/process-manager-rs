@@ -425,9 +425,49 @@ pub struct DataStorageInfo {
     pub has_jiggler: bool,
     pub has_downloader: bool,
     pub has_chat: bool,
+    #[serde(default)]
+    pub has_public_servers: bool,
     pub services_count: usize,
     pub todos_count: usize,
     pub credentials_count: usize,
     pub clips_count: usize,
     pub messages_count: usize,
+    #[serde(default)]
+    pub public_servers_count: usize,
+}
+
+// ==========================================
+// 8. Public Server (Cloudflared Tunnel) Models
+// ==========================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicServerConfig {
+    pub id: String,
+    pub name: String,
+    pub local_url: String,
+    #[serde(default = "default_true")]
+    pub auto_start: bool,
+    #[serde(default)]
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicServerStatus {
+    pub id: String,
+    pub name: String,
+    pub local_url: String,
+    pub public_url: Option<String>,
+    pub status: String, // "stopped", "connecting", "online", "error"
+    pub auto_start: bool,
+    pub pid: Option<u32>,
+    pub error_message: Option<String>,
+    pub uptime_seconds: u64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudflaredStatus {
+    pub installed: bool,
+    pub path: Option<String>,
+    pub version: Option<String>,
 }

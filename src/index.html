@@ -11,55 +11,73 @@
   <script type="module" src="main.js" defer></script>
 </head>
 <body>
-  <!-- Top Navigation Bar -->
-  <header class="app-header">
-    <div class="brand">
-      <div class="brand-badge">⚡ RS</div>
-      <div class="brand-info">
-        <h1>Process Manager</h1>
-        <span class="subtext">Rust Core • Win32 Job Objects</span>
+  <!-- App Sidebar Navigation -->
+  <aside class="app-sidebar">
+    <div class="sidebar-header">
+      <div class="brand">
+        <div class="brand-badge">⚡ RS</div>
+        <div class="brand-info">
+          <h1>Process Manager</h1>
+          <span class="subtext">Rust Core • Win32</span>
+        </div>
       </div>
-      <div id="admin-badge" class="badge badge-admin">[USER]</div>
+      <div id="admin-badge" class="badge badge-admin" title="Click to request elevation">[USER]</div>
     </div>
 
-    <nav class="nav-tabs">
-      <button class="nav-tab active" data-tab="tab-services" id="tab-btn-services">
-        <span class="tab-icon">⚡</span> Services
-      </button>
-      <button class="nav-tab" data-tab="tab-ports" id="tab-btn-ports">
-        <span class="tab-icon">🎯</span> Port Killer
-      </button>
-      <button class="nav-tab" data-tab="tab-jiggler" id="tab-btn-jiggler">
-        <span class="tab-icon">🐭</span> Jiggler
-      </button>
-      <button class="nav-tab" data-tab="tab-vault" id="tab-btn-vault">
-        <span class="tab-icon">🔐</span> Vault & Clips
-      </button>
-      <button class="nav-tab" data-tab="tab-tasks" id="tab-btn-tasks">
-        <span class="tab-icon">📝</span> Tasks
-      </button>
-      <button class="nav-tab" data-tab="tab-downloader" id="tab-btn-downloader">
-        <span class="tab-icon">📥</span> Downloader
-      </button>
-      <button class="nav-tab" data-tab="tab-chat" id="tab-btn-chat">
-        <span class="tab-icon">💬</span> LAN Chat
-        <span class="chat-tab-badge hidden" id="badge-chat-unread">0</span>
-      </button>
-      <button class="nav-tab" data-tab="tab-media" id="tab-btn-media">
-        <span class="tab-icon">🎬</span> Media Player
-      </button>
-      <button class="nav-tab" data-tab="tab-netmon" id="tab-btn-netmon">
-        <span class="tab-icon">🌐</span> Net Monitor
-      </button>
-    </nav>
+    <div class="sidebar-nav-container">
+      <div class="sidebar-section-title">NAVIGATION</div>
+      <nav class="nav-tabs">
+        <button class="nav-tab active" data-tab="tab-services" id="tab-btn-services">
+          <span class="tab-icon">⚡</span>
+          <span class="tab-label">Services</span>
+        </button>
+        <button class="nav-tab" data-tab="tab-ports" id="tab-btn-ports">
+          <span class="tab-icon">🎯</span>
+          <span class="tab-label">Port Killer</span>
+        </button>
+        <button class="nav-tab" data-tab="tab-jiggler" id="tab-btn-jiggler">
+          <span class="tab-icon">🐭</span>
+          <span class="tab-label">Jiggler</span>
+        </button>
+        <button class="nav-tab" data-tab="tab-vault" id="tab-btn-vault">
+          <span class="tab-icon">🔐</span>
+          <span class="tab-label">Vault & Clips</span>
+        </button>
+        <button class="nav-tab" data-tab="tab-tasks" id="tab-btn-tasks">
+          <span class="tab-icon">📝</span>
+          <span class="tab-label">Tasks</span>
+        </button>
+        <button class="nav-tab" data-tab="tab-downloader" id="tab-btn-downloader">
+          <span class="tab-icon">📥</span>
+          <span class="tab-label">Downloader</span>
+        </button>
+        <button class="nav-tab" data-tab="tab-chat" id="tab-btn-chat">
+          <span class="tab-icon">💬</span>
+          <span class="tab-label">LAN Chat</span>
+          <span class="chat-tab-badge hidden" id="badge-chat-unread">0</span>
+        </button>
+        <button class="nav-tab" data-tab="tab-media" id="tab-btn-media">
+          <span class="tab-icon">🎬</span>
+          <span class="tab-label">Media Player</span>
+        </button>
+        <button class="nav-tab" data-tab="tab-netmon" id="tab-btn-netmon">
+          <span class="tab-icon">🌐</span>
+          <span class="tab-label">Net Monitor</span>
+        </button>
+        <button class="nav-tab" data-tab="tab-public-server" id="tab-btn-public-server">
+          <span class="tab-icon">☁️</span>
+          <span class="tab-label">Public Server</span>
+        </button>
+      </nav>
+    </div>
 
-    <div class="header-actions">
+    <div class="sidebar-footer">
       <button class="btn-storage-pill" id="btn-open-storage-modal" title="Change data storage folder / import from custom path">
         <span class="storage-icon">📁</span>
         <span class="storage-label" id="lbl-header-storage-path">Storage Folder</span>
       </button>
     </div>
-  </header>
+  </aside>
 
   <!-- Main Container -->
   <main class="app-body">
@@ -1099,6 +1117,59 @@
         </div>
       </div>
     </section>
+    <!-- ============================================== -->
+    <!-- 10. TAB: PUBLIC SERVER (CLOUDFLARED TUNNELS)   -->
+    <!-- ============================================== -->
+    <section id="tab-public-server" class="tab-pane">
+      <div class="public-server-container">
+        <!-- Toolbar -->
+        <div class="tab-toolbar public-server-toolbar">
+          <div class="public-server-toolbar-left">
+            <button class="btn btn-primary" id="btn-open-add-public-server">
+              ➕ Add Server
+            </button>
+            <button class="btn btn-secondary" id="btn-refresh-public-servers" title="Refresh tunnel statuses">
+              🔄 Refresh
+            </button>
+            <button class="btn btn-secondary" id="btn-start-all-public-servers" title="Start all tunnels">
+              ▶ Start All
+            </button>
+            <button class="btn btn-secondary" id="btn-stop-all-public-servers" title="Stop all tunnels">
+              ⏹ Stop All
+            </button>
+          </div>
+          <div class="public-server-toolbar-right">
+            <div class="cloudflared-status-badge" id="badge-cloudflared-status" title="Cloudflare Tunnel Engine">
+              <span class="cf-dot" id="dot-cloudflared-status"></span>
+              <span id="lbl-cloudflared-status">Checking cloudflared...</span>
+            </div>
+            <input type="text" class="input-search" id="input-search-public-servers" placeholder="🔍 Search servers...">
+          </div>
+        </div>
+
+        <!-- Warning / notice if cloudflared is not installed -->
+        <div class="alert-banner hidden" id="banner-cloudflared-missing">
+          <span class="alert-icon">⚠️</span>
+          <div class="alert-content">
+            <strong>cloudflared executable not found!</strong>
+            <span>Cloudflare Tunnel requires <code>cloudflared.exe</code>. Install it in terminal: <code>winget install --id Cloudflare.cloudflared</code> or place it in the application folder.</span>
+          </div>
+        </div>
+
+        <!-- Servers Grid / List -->
+        <div class="public-servers-grid" id="public-servers-list">
+          <!-- Dynamic server cards -->
+        </div>
+
+        <!-- Empty state placeholder -->
+        <div class="empty-state hidden" id="empty-state-public-servers">
+          <div class="empty-icon">☁️</div>
+          <h3>No Public Servers Configured</h3>
+          <p>Expose any local server (e.g. <code>http://localhost:8080</code>) to the internet with high-speed Cloudflare Tunnels.</p>
+          <button class="btn btn-primary btn-empty-cta" id="btn-empty-add-public-server">➕ Add Your First Server</button>
+        </div>
+      </div>
+    </section>
   </main>
 
   <!-- ============================================== -->
@@ -1547,6 +1618,63 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" id="btn-cancel-chat-settings">Cancel</button>
         <button class="btn btn-primary" id="btn-save-chat-settings">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add / Edit Public Server -->
+  <div class="modal-overlay hidden" id="modal-add-public-server">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-public-server-title">🌐 Add Public Server</h3>
+        <button class="btn-close" id="btn-close-public-server-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="input-public-server-id">
+        <div class="form-group">
+          <label>Local Server Address <span class="required">*</span></label>
+          <input type="text" id="input-public-server-url" placeholder="http://localhost:8080" value="http://localhost:8080" autocomplete="off" spellcheck="false">
+          <span class="form-hint">E.g. <code>http://localhost:8080</code>, <code>http://127.0.0.1:3000</code>, or port <code>8080</code></span>
+        </div>
+        <div class="form-group">
+          <label>Server Name / Label <span class="form-optional">(Optional)</span></label>
+          <input type="text" id="input-public-server-name" placeholder="e.g. My Web App / API Server" autocomplete="off">
+          <span class="form-hint">Leave blank to auto-generate from the local server address</span>
+        </div>
+        <div class="form-group-checkbox">
+          <label class="checkbox-label">
+            <input type="checkbox" id="chk-public-server-autostart" checked>
+            <span>Start tunnel immediately in background (<code>cloudflared tunnel --url &lt;address&gt;</code>)</span>
+          </label>
+        </div>
+        <div class="public-server-feedback hidden" id="public-server-add-feedback"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-public-server">Cancel</button>
+        <button class="btn btn-primary" id="btn-save-public-server">Start & Save Server</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Public Server Live Logs -->
+  <div class="modal-overlay hidden" id="modal-public-server-logs">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <h3 id="modal-public-server-logs-title">📋 Tunnel Logs</h3>
+          <span class="modal-subtitle" id="modal-public-server-logs-subtitle">cloudflared stdout / stderr</span>
+        </div>
+        <button class="btn-close" id="btn-close-public-server-logs">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 12px 20px;">
+        <div class="tunnel-logs-container" id="tunnel-logs-content">
+          <pre id="pre-tunnel-logs">Loading logs...</pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-copy-tunnel-logs">📋 Copy Logs</button>
+        <button class="btn btn-secondary" id="btn-clear-tunnel-logs">🗑 Clear</button>
+        <button class="btn btn-primary" id="btn-done-tunnel-logs">Done</button>
       </div>
     </div>
   </div>
